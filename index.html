@@ -118,7 +118,7 @@ const RADAR_SIZE = 0.22;    // Radius des Radars relativ zur kürzeren Bildschir
 const ALERT_COOLDOWN = 1000;// ms zwischen zwei Signalen für neue Objekte
 const RANGES = [10, 20, 50];// Radar-Reichweiten in Metern (Tippen aufs Radar wechselt)
 const TAU = Math.PI * 2;
-const APP_VERSION = '1.8';  // bei jedem Update zusammen mit version.json erhöhen
+const APP_VERSION = '1.9';  // bei jedem Update zusammen mit version.json erhöhen
 
 let model = null;
 let blips = [];             // { id, cls, bearing, dist, clipped, lastSeen, lastHit }
@@ -403,10 +403,25 @@ $('camBtn').onclick = () => {
 };
 
 // Im Automatik-Modus regelmäßig zwischen hinten und vorne wechseln
+// (im Laser-Modus pausiert, weil der Laser neben der Rückkamera sitzt)
+let camFailures = 0;
 function maybeSwitchCamera(now) {
   if (!twoCams || switching || laser.on || settings.camMode !== 'auto' || now - cameraSince < CAM_DWELL) return;
-  openCamera(facing === 'user' ? 'environment' : 'user')
-    .catch(() => { twoCams = false; $('camBtn').hidden = true; });
+  const prev = facing;
+  openCamera(prev === 'user' ? 'environment' : 'user')
+    .then(() => { camFailures = 0; })
+    .catch(() => {
+      // Ein einzelner Fehler (kommt auf dem iPhone vor) darf den Wechsel nicht dauerhaft
+      // abschalten. Zurück zur bisherigen Kamera, damit das Bild nicht schwarz bleibt,
+      // und nach der Wartezeit erneut versuchen.
+      camFailures++;
+      openCamera(prev).catch(() => {});
+      if (camFailures >= 3) {
+        twoCams = false;
+        $('camBtn').hidden = true;
+        statusEl.textContent = 'Kamerawechsel nicht möglich';
+      }
+    });
 }
 
 /* ---------------- Laser-Modus ---------------- */
@@ -573,6 +588,11 @@ let hum = null;
 // Leises Laser-Summen, solange der Strahl leuchtet
 function updateHum(level) {
   if (!audio) return;
+  // Klang nur erzeugen, solange der Laser-Modus läuft, sonst ganz abbauen
+  if (!laser.on) {
+    if (hum) { hum.oscs.forEach(o => o.stop()); hum.gain.disconnect(); hum = null; }
+    return;
+  }
   if (!hum) {
     const gain = audio.createGain();
     const filter = audio.createBiquadFilter();
@@ -580,16 +600,17 @@ function updateHum(level) {
     filter.frequency.value = 700;
     gain.gain.value = 0;
     filter.connect(gain).connect(audio.destination);
-    for (const [freq, type] of [[110, 'sawtooth'], [221, 'square']]) {
+    const oscs = [[110, 'sawtooth'], [221, 'square']].map(([freq, type]) => {
       const osc = audio.createOscillator();
       osc.type = type;
       osc.frequency.value = freq;
       osc.connect(filter);
       osc.start();
-    }
-    hum = gain;
+      return osc;
+    });
+    hum = { gain, oscs };
   }
-  hum.gain.setTargetAtTime(settings.sound ? level * 0.04 : 0, audio.currentTime, 0.05);
+  hum.gain.gain.setTargetAtTime(settings.sound ? level * 0.04 : 0, audio.currentTime, 0.05);
 }
 
 function drawArLaser(x, y, a, onFloor) {
@@ -977,7 +998,8 @@ function render() {
   drawRadar(now);
 
   headingEl.textContent = (hasCompass ? `🧭 ${headingText()}` : '🧭 kein Kompass')
-    + (facing === 'user' ? ' · vorne' : ' · hinten');
+    + (facing === 'user' ? ' · vorne' : ' · hinten')
+    + (laser.on && settings.camMode === 'auto' && twoCams ? ' (Wechsel pausiert: Laser)' : '');
 
   requestAnimationFrame(render);
 }
