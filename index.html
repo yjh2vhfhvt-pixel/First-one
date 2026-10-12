@@ -118,7 +118,7 @@ const RADAR_SIZE = 0.22;    // Radius des Radars relativ zur kürzeren Bildschir
 const ALERT_COOLDOWN = 1000;// ms zwischen zwei Signalen für neue Objekte
 const RANGES = [10, 20, 50];// Radar-Reichweiten in Metern (Tippen aufs Radar wechselt)
 const TAU = Math.PI * 2;
-const APP_VERSION = '1.6';  // bei jedem Update zusammen mit version.json erhöhen
+const APP_VERSION = '1.7';  // bei jedem Update zusammen mit version.json erhöhen
 
 let model = null;
 let blips = [];             // { id, cls, bearing, dist, clipped, lastSeen, lastHit }
@@ -455,6 +455,7 @@ function updateLaser(now) {
     laser.tx = laser.ty = null;
   } else {
     laser.targetId = t.id;
+    laser.dist = t.dist;
     const [x, y, w, h] = t.bbox;
     if (y + h >= vh * 0.97) {
       reason = 'Füße nicht im Bild';
@@ -548,25 +549,103 @@ $('laserBtn').onclick = () => {
 };
 $('bleBtn').onclick = connectLaser;
 
+// AR-Laser: Strahl, Laserpunkt und Summen werden ins Kamerabild gezeichnet,
+// damit der Effekt auch ohne Laser-Hardware sichtbar ist
+let laserGlow = 0;          // 0..1, blendet den Strahl weich ein und aus
+let wasActive = false;
+let hum = null;
+
+// Leises Laser-Summen, solange der Strahl leuchtet
+function updateHum(level) {
+  if (!audio) return;
+  if (!hum) {
+    const gain = audio.createGain();
+    const filter = audio.createBiquadFilter();
+    filter.type = 'lowpass';
+    filter.frequency.value = 700;
+    gain.gain.value = 0;
+    filter.connect(gain).connect(audio.destination);
+    for (const [freq, type] of [[110, 'sawtooth'], [221, 'square']]) {
+      const osc = audio.createOscillator();
+      osc.type = type;
+      osc.frequency.value = freq;
+      osc.connect(filter);
+      osc.start();
+    }
+    hum = gain;
+  }
+  hum.gain.setTargetAtTime(settings.sound ? level * 0.04 : 0, audio.currentTime, 0.05);
+}
+
+function drawArLaser(x, y, a) {
+  const flick = 0.8 + Math.random() * 0.2;      // leichtes Flackern wie bei einem echten Laser
+  const sx = canvas.width / 2, sy = canvas.height + 10;  // Strahl kommt von unten (vom Handy)
+  ctx.save();
+  ctx.globalCompositeOperation = 'lighter';
+  ctx.lineCap = 'round';
+
+  // Strahl: breiter Schein, roter Kern, heller Mittelstrich
+  const beam = (width, style) => {
+    ctx.lineWidth = width;
+    ctx.strokeStyle = style;
+    ctx.beginPath();
+    ctx.moveTo(sx, sy);
+    ctx.lineTo(x, y);
+    ctx.stroke();
+  };
+  const glow = ctx.createLinearGradient(sx, sy, x, y);
+  glow.addColorStop(0, `rgba(255, 20, 20, ${0.35 * a})`);
+  glow.addColorStop(1, `rgba(255, 20, 20, ${0.12 * a})`);
+  beam(12, glow);
+  beam(3, `rgba(255, 60, 60, ${0.75 * a * flick})`);
+  beam(1, `rgba(255, 220, 220, ${0.85 * a * flick})`);
+
+  // Staubteilchen, die im Strahl aufleuchten
+  for (let i = 0; i < 14; i++) {
+    const t = Math.random();
+    ctx.fillStyle = `rgba(255, 120, 120, ${Math.random() * 0.7 * a})`;
+    ctx.fillRect(sx + (x - sx) * t + (Math.random() - 0.5) * 6, sy + (y - sy) * t + (Math.random() - 0.5) * 6, 2, 2);
+  }
+
+  // Laserpunkt auf dem Boden: flach (perspektivisch), näher = größer
+  const r = Math.max(10, Math.min(30, 60 / (laser.dist || 3)));
+  const jx = x + (Math.random() - 0.5) * 1.5, jy = y + (Math.random() - 0.5) * 1.5;
+  const dot = ctx.createRadialGradient(jx, jy, 0, jx, jy, r * 2);
+  dot.addColorStop(0,    `rgba(255, 255, 255, ${a})`);
+  dot.addColorStop(0.12, `rgba(255, 70, 70, ${a * flick})`);
+  dot.addColorStop(0.35, `rgba(255, 0, 0, ${0.4 * a})`);
+  dot.addColorStop(1,    'rgba(255, 0, 0, 0)');
+  ctx.fillStyle = dot;
+  ctx.beginPath();
+  ctx.ellipse(jx, jy, r * 2, r * 1.1, 0, 0, TAU);
+  ctx.fill();
+  ctx.restore();
+}
+
 function drawLaser(now) {
+  const show = laser.on && laser.active && laser.tx != null && facing === 'environment';
+  laserGlow += ((show ? 1 : 0) - laserGlow) * 0.3;
+  updateHum(laser.on ? laserGlow : 0);
+
+  // Kurzes "Zap" beim Einschalten
+  if (show && !wasActive && settings.sound && audio) tone(1800, audio.currentTime, 0.08, 0.15);
+  wasActive = show;
+
   if (!laser.on) return;
   $('laserText').textContent = laser.active
-    ? `🔴 Laser AN · Person #${laser.targetId}` + (laser.char ? '' : ' (nur Anzeige)')
+    ? (laser.char ? `🔴 Laser AN · Person #${laser.targetId}` : `🔴 AR-Laser · Person #${laser.targetId}`)
     : `⚪ Laser aus: ${laser.reason}`;
   if (laser.tx == null || !video.videoWidth || facing !== 'environment') return;
 
   const { scale, ox, oy } = videoToScreen();
   const x = ox + laser.tx * scale, y = oy + laser.ty * scale;
-  if (laser.active) {
-    ctx.fillStyle = '#ff2020';
-    ctx.shadowColor = '#ff0000';
-    ctx.shadowBlur = 18;
-    ctx.beginPath();
-    ctx.arc(x, y, 7, 0, TAU);
-    ctx.fill();
-    ctx.shadowBlur = 0;
+  if (laserGlow > 0.02) {
+    drawArLaser(x, y, laserGlow);
+    return;
   }
-  ctx.strokeStyle = laser.active ? 'rgba(255, 60, 60, 0.9)' : 'rgba(200, 200, 200, 0.7)';
+
+  // Laser aus: graues Fadenkreuz zeigt, wo er hinzielen würde
+  ctx.strokeStyle = 'rgba(200, 200, 200, 0.7)';
   ctx.lineWidth = 2;
   ctx.beginPath();
   ctx.arc(x, y, 16, 0, TAU);
