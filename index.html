@@ -27,7 +27,7 @@
           display:flex; flex-direction:column; gap:6px; align-items:flex-start; }
   #heading { font-weight:bold; }
   #controls { position:fixed; z-index:2; top:calc(12px + var(--st)); right:calc(12px + var(--sr));
-              display:flex; gap:8px; }
+              display:flex; flex-direction:column; gap:8px; }
   #controls button { background:rgba(0,0,0,.6); color:#0f0; border:1px solid #0f0;
                      border-radius:8px; font-size:20px; width:44px; height:44px; cursor:pointer; }
   #controls button.off { color:#060; border-color:#060; }
@@ -36,6 +36,7 @@
   #laserHud button { background:rgba(0,0,0,.6); color:#f55; border:1px solid #f55; border-radius:8px;
                      padding:6px 10px; font-size:14px; cursor:pointer; }
   #laserHud small { color:#faa; }
+  #laserHud[hidden] { display:none; }
   #legend { position:fixed; z-index:2; bottom:calc(12px + var(--sb)); left:calc(12px + var(--sl));
             display:flex; flex-direction:column; gap:4px; }
   #legend button { display:flex; align-items:center; gap:6px; background:rgba(0,0,0,.6);
@@ -48,6 +49,28 @@
            font-size:22px; border:none; cursor:pointer; padding:24px; }
   #start small { display:block; margin-top:8px; font-size:15px; color:#0a0; }
   #start .tip { margin-top:28px; font-size:14px; color:#8c8; }
+  #panel { position:fixed; inset:0; z-index:4; background:rgba(0,0,0,.55); display:flex;
+           align-items:flex-end; justify-content:center; }
+  #panel[hidden] { display:none; }
+  #panel .box { background:#031a03; color:#cfc; border:1px solid #0a0; border-radius:14px 14px 0 0;
+                width:100%; max-width:480px; max-height:85vh; overflow:auto; box-sizing:border-box;
+                padding:16px 16px calc(16px + var(--sb)); font-size:15px; }
+  #panel h3 { margin:0 0 12px; color:#0f0; }
+  #panel h4 { margin:18px 0 6px; color:#0f0; }
+  #panel .row { display:flex; align-items:center; justify-content:space-between; gap:8px;
+                margin:10px 0; flex-wrap:wrap; }
+  #panel small { display:block; color:#8a8; font-size:12px; line-height:1.4; }
+  #panel button, #panel input { background:#000; color:#0f0; border:1px solid #0a0; border-radius:8px;
+                                padding:7px 10px; font-size:14px; }
+  #panel input { width:64px; }
+  #panel .seg { display:flex; gap:4px; }
+  #panel .seg button.sel { background:#0a0; color:#000; font-weight:bold; }
+  #panelClose { width:100%; margin-top:18px; font-weight:bold; }
+  #alarm { position:fixed; inset:0; z-index:1; pointer-events:none; border:0 solid rgba(255,0,0,.8);
+           box-sizing:border-box; }
+  #alarmText { position:fixed; z-index:2; left:50%; top:40%; transform:translateX(-50%);
+               background:rgba(180,0,0,.85); color:#fff; font-weight:bold; font-size:18px;
+               padding:10px 16px; border-radius:10px; text-align:center; }
   #safe { position:fixed; visibility:hidden; padding-bottom:var(--sb); padding-right:var(--sr); }
 </style>
 </head>
@@ -68,7 +91,37 @@
   <button id="laserBtn" title="Laser-Modus an/aus" class="off">🎯</button>
   <button id="camBtn" title="Kamera: automatisch wechseln / hinten / vorne" hidden>🔄</button>
   <button id="soundBtn" title="Ton an/aus">🔊</button>
-  <button id="vibBtn" title="Vibration an/aus">📳</button>
+  <button id="settingsBtn" title="Einstellungen">⚙️</button>
+</div>
+<div id="alarm"></div>
+<div id="alarmText" hidden></div>
+<div id="panel" hidden>
+  <div class="box">
+    <h3>⚙️ Einstellungen</h3>
+    <div class="row"><span>Erkennung</span>
+      <div class="seg" data-key="model"><button data-v="fast">⚡ Schnell</button><button data-v="accurate">🔍 Genau</button></div></div>
+    <small>„Genau“ erkennt Personen zuverlässiger, auch weiter weg und von der Seite, ist aber langsamer
+      und muss beim ersten Mal ein größeres Modell laden.</small>
+    <div class="row"><span>Annäherungs-Alarm</span>
+      <div class="seg" data-key="alarm"><button data-v="0">Aus</button><button data-v="2">2 m</button><button data-v="3">3 m</button><button data-v="5">5 m</button></div></div>
+    <small>Warnt, wenn jemand näher kommt als dieser Abstand.</small>
+    <div class="row"><span>Ton</span>
+      <div class="seg" data-key="sound"><button data-v="true">An</button><button data-v="false">Aus</button></div></div>
+    <div class="row" id="vibRow"><span>Vibration</span>
+      <div class="seg" data-key="vibrate"><button data-v="true">An</button><button data-v="false">Aus</button></div></div>
+
+    <h4>📏 Entfernung kalibrieren</h4>
+    <small>Stell eine Person in bekanntem Abstand vor die Kamera, ganz im Bild (Kopf bis Füße).
+      Abstand eingeben und „Kalibrieren“ tippen, dann die Person 2 Sekunden lang im Bild halten.
+      Gilt für die gerade aktive Kamera.</small>
+    <div class="row">
+      <span><input id="calDist" type="number" inputmode="decimal" step="0.5" min="1" max="30" value="3"> m</span>
+      <button id="calBtn">Kalibrieren</button>
+      <button id="calReset">Zurücksetzen</button>
+    </div>
+    <small id="calInfo"></small>
+    <button id="panelClose">Fertig</button>
+  </div>
 </div>
 <div id="legend" hidden></div>
 <button id="start" hidden>
@@ -115,10 +168,11 @@ const BOX_TIMEOUT = 500;    // ms, nach denen ein Rahmen ohne neue Erkennung ver
 const LOST_IN_VIEW = 2000;  // ms: im Sichtfeld, aber nicht mehr erkannt -> entfernen
 const MEMORY_TIME = 30000;  // ms: außerhalb des Sichtfelds so lange merken
 const RADAR_SIZE = 0.22;    // Radius des Radars relativ zur kürzeren Bildschirmseite
+const MOVE_MIN = 0.4;       // m/s, ab hier gilt ein Objekt als in Bewegung
 const ALERT_COOLDOWN = 1000;// ms zwischen zwei Signalen für neue Objekte
 const RANGES = [10, 20, 50];// Radar-Reichweiten in Metern (Tippen aufs Radar wechselt)
 const TAU = Math.PI * 2;
-const APP_VERSION = '1.9';  // bei jedem Update zusammen mit version.json erhöhen
+const APP_VERSION = '2.0';  // bei jedem Update zusammen mit version.json erhöhen
 
 let model = null;
 let blips = [];             // { id, cls, bearing, dist, clipped, lastSeen, lastHit }
@@ -137,6 +191,9 @@ const settings = Object.assign({
   sound: true,
   vibrate: 'vibrate' in navigator,
   range: 1,
+  model: 'fast',            // 'fast' = kleines Modell, 'accurate' = größeres, genaueres Modell
+  alarm: 3,                 // Annäherungs-Alarm in Metern, 0 = aus
+  distScale: { environment: 1, user: 1 },  // Kalibrierfaktor der Entfernung je Kamera
   camMode: 'auto',         // 'auto' = wechseln, 'environment' = hinten, 'user' = vorne
   enabled: Object.keys(CLASSES)
 }, load('radar-settings'));
@@ -152,6 +209,15 @@ let devicePitch = null;     // Neigung nach vorn/hinten in Grad (beta)
 
 let audio = null;
 let lastAlert = 0;
+let lastAlarm = 0;
+let statusHoldUntil = 0;
+// Meldung ein paar Sekunden stehen lassen, bevor wieder die Zählung angezeigt wird
+function holdStatus(text, ms = 4000) {
+  statusEl.textContent = text;
+  statusHoldUntil = performance.now() + ms;
+}
+let alarmUntil = 0;
+let alarmMsg = '';
 
 // Winkel auf (-PI, PI] bringen
 const wrap = a => ((a % TAU) + TAU + Math.PI) % TAU - Math.PI;
@@ -167,17 +233,47 @@ resize();
 async function init() {
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
   $('version').textContent = 'Version ' + APP_VERSION;
+  refreshPanel();
   checkForUpdate();
   const standalone = matchMedia('(display-mode: fullscreen), (display-mode: standalone)').matches
                      || navigator.standalone;
   if (/iPhone|iPad|iPod/.test(navigator.userAgent) && !standalone) $('iosTip').hidden = false;
 
   try {
-    model = await cocoSsd.load();
+    await loadModel();
     statusEl.textContent = 'Bereit';
     startBtn.hidden = false;
   } catch (e) {
     statusEl.textContent = 'Fehler beim Laden: ' + e.message;
+  }
+}
+
+/* ---------------- KI-Modell ---------------- */
+
+const MODEL_BASES = { fast: 'lite_mobilenet_v2', accurate: 'mobilenet_v2' };
+let modelLoading = false;
+
+// Lädt das gewählte Modell; das alte läuft weiter, bis das neue fertig ist
+async function loadModel() {
+  modelLoading = true;
+  const wanted = settings.model;
+  if (model) statusEl.textContent = wanted === 'accurate' ? 'Lade genaues Modell…' : 'Lade schnelles Modell…';
+  try {
+    const next = await cocoSsd.load({ base: MODEL_BASES[wanted] });
+    const old = model;
+    model = next;
+    if (old) setTimeout(() => old.dispose(), 2000);  // erst freigeben, wenn keine Erkennung mehr läuft
+    return true;
+  } catch (e) {
+    if (wanted === 'fast') throw e;
+    // Genaues Modell klappt nicht (z. B. zu wenig Speicher): beim schnellen bleiben
+    settings.model = 'fast';
+    save(); refreshPanel();
+    if (!model) await loadModel();
+    holdStatus('Genaues Modell nicht verfügbar');
+    return false;
+  } finally {
+    modelLoading = false;
   }
 }
 
@@ -312,22 +408,84 @@ function sweepPing(dist) {
   tone(600 + 600 * near, audio.currentTime, 0.3, 0.12);
 }
 
-function updateButtons() {
+// Dreifacher hoher Warnton + lange Vibration, wenn jemand zu nah kommt
+function alarmProximity(b) {
+  const now = performance.now();
+  alarmUntil = now + 2000;
+  alarmMsg = `⚠️ ${CLASSES[b.cls].name} #${b.id} näher als ${settings.alarm} m`;
+  if (now - lastAlarm < 1500) return;
+  lastAlarm = now;
+  if (settings.sound && audio) {
+    const t = audio.currentTime;
+    for (let i = 0; i < 3; i++) tone(1900, t + i * 0.14, 0.1, 0.5);
+  }
+  if (settings.vibrate && 'vibrate' in navigator) navigator.vibrate([300, 100, 300]);
+}
+
+/* ---------------- Einstellungen ---------------- */
+
+function refreshPanel() {
   $('soundBtn').textContent = settings.sound ? '🔊' : '🔇';
   $('soundBtn').classList.toggle('off', !settings.sound);
-  $('vibBtn').classList.toggle('off', !settings.vibrate);
-  $('vibBtn').hidden = !('vibrate' in navigator);
+  $('vibRow').hidden = !('vibrate' in navigator);
+  document.querySelectorAll('#panel .seg').forEach(seg => {
+    const value = String(settings[seg.dataset.key]);
+    seg.querySelectorAll('button').forEach(b => b.classList.toggle('sel', b.dataset.v === value));
+  });
+  const k = settings.distScale[facing] ?? 1;
+  $('calInfo').textContent = `Aktuelle Kamera (${facing === 'user' ? 'vorne' : 'hinten'}): ` +
+    (k === 1 ? 'nicht kalibriert' : `kalibriert, Faktor ${k.toFixed(2).replace('.', ',')}`);
 }
+
+document.querySelectorAll('#panel .seg').forEach(seg => {
+  seg.addEventListener('click', e => {
+    const v = e.target.dataset?.v;
+    if (v === undefined) return;
+    const key = seg.dataset.key;
+    const value = v === 'true' ? true : v === 'false' ? false : isNaN(v) ? v : Number(v);
+    if (settings[key] === value) return;
+    settings[key] = value;
+    save(); refreshPanel();
+    if (key === 'model' && !modelLoading) loadModel().then(ok => ok && holdStatus(settings.model === 'accurate' ? '🔍 Genaues Modell aktiv' : '⚡ Schnelles Modell aktiv'), () => {});
+    if (key === 'sound' && value && audio) audio.resume();
+  });
+});
 $('soundBtn').onclick = () => {
   settings.sound = !settings.sound;
   if (settings.sound && audio) audio.resume();
-  save(); updateButtons();
+  save(); refreshPanel();
 };
-$('vibBtn').onclick = () => {
-  settings.vibrate = !settings.vibrate;
-  save(); updateButtons();
+$('settingsBtn').onclick = () => { refreshPanel(); $('panel').hidden = false; };
+$('panelClose').onclick = () => { $('panel').hidden = true; };
+$('panel').onclick = e => { if (e.target.id === 'panel') $('panel').hidden = true; };
+
+// Kalibrierung: misst 2 Sekunden lang die nächste vollständig sichtbare Person
+let calib = null;
+$('calBtn').onclick = () => {
+  const real = parseFloat(String($('calDist').value).replace(',', '.'));
+  if (!(real >= 0.5 && real <= 50)) { $('calInfo').textContent = 'Bitte einen Abstand zwischen 0,5 und 50 m eingeben.'; return; }
+  if (!video.srcObject) { $('calInfo').textContent = 'Erst das Radar starten.'; return; }
+  calib = { real, cam: facing, samples: [], until: performance.now() + 2000 };
+  $('panel').hidden = true;
 };
-updateButtons();
+$('calReset').onclick = () => {
+  settings.distScale[facing] = 1;
+  save(); refreshPanel();
+};
+
+function finishCalibration() {
+  const { real, cam, samples } = calib;
+  calib = null;
+  if (samples.length < 5) {
+    holdStatus('📏 Keine ganze Person erkannt – Kopf bis Füße ins Bild');
+    return;
+  }
+  samples.sort((a, b) => a - b);
+  const median = samples[Math.floor(samples.length / 2)];
+  settings.distScale[cam] = real / median;
+  save(); refreshPanel();
+  holdStatus(`📏 Kalibriert (Faktor ${(real / median).toFixed(2).replace('.', ',')})`);
+}
 
 /* ---------------- Legende mit Filter ---------------- */
 
@@ -749,6 +907,20 @@ function focalLength() {
   return (long / 2) / Math.tan(LONG_FOV[facing] / 2);
 }
 
+// Bewegung schätzen: Position (Meter, Osten/Norden) der letzten 1,5 s merken und die
+// Geschwindigkeit über das ganze Zeitfenster bestimmen, damit das Zittern der Rahmen
+// nicht als Bewegung zählt
+function trackMotion(b, now) {
+  const px = b.dist * Math.sin(b.bearing), py = b.dist * Math.cos(b.bearing);
+  b.hist = (b.hist || []).filter(h => now - h.t < 1500);
+  b.hist.push({ t: now, px, py, d: b.dist });
+  const first = b.hist[0], span = (now - first.t) / 1000;
+  if (span < 0.7) { b.vx = b.vy = b.vr = 0; return; }
+  b.vx = (px - first.px) / span;
+  b.vy = (py - first.py) / span;
+  b.vr = (b.dist - first.d) / span;   // negativ = kommt näher
+}
+
 // Läuft unabhängig vom Zeichnen, etwa 10× pro Sekunde
 async function detectLoop() {
   if (video.readyState >= 2 && !switching) {
@@ -762,14 +934,17 @@ async function detectLoop() {
 
     const used = new Set();   // jeder Punkt darf pro Durchlauf nur einem Objekt zugeordnet werden
     const found = [];
+    let calibRaw = Infinity;
 
     for (const p of preds) {
       if (!CLASSES[p.class] || !isEnabled(p.class) || p.score < MIN_SCORE) continue;
       const cls = p.class;
       const [x, y, w, h] = p.bbox;
 
-      // Entfernung über die typische Höhe: Abstand = echte Höhe × Brennweite / Höhe im Bild
-      const dist = CLASSES[cls].height * f / h;
+      // Entfernung über die typische Höhe: Abstand = echte Höhe × Brennweite / Höhe im Bild,
+      // korrigiert mit dem Kalibrierfaktor der Kamera
+      const raw = CLASSES[cls].height * f / h;
+      const dist = raw * (settings.distScale[facing] ?? 1);
       // Winkel zur Blickrichtung der Kamera -> Himmelsrichtung
       // (rechts im Rohbild ist rechts aus Sicht der Kamera, auch bei der Frontkamera)
       const angle = Math.atan((x + w / 2 - vw / 2) / f);
@@ -778,6 +953,8 @@ async function detectLoop() {
       const clipped = y <= 2 || y + h >= vh - 2;
       // Eine nahe, unten angeschnittene Person vor der Frontkamera bist du selbst
       if (facing === 'user' && cls === 'person' && clipped && dist < SELF_DIST) continue;
+      // Kalibrierung: nur ganz sichtbare Personen zählen, die nächste pro Bild
+      if (calib && cls === 'person' && !clipped && facing === calib.cam) calibRaw = Math.min(calibRaw, raw);
 
       // Nächstgelegenen bekannten Punkt derselben Art aktualisieren, sonst neuen anlegen
       let blip = null, best = Infinity;
@@ -799,7 +976,20 @@ async function detectLoop() {
       used.add(blip);
       blip.clipped = clipped;
       blip.lastSeen = now;
-      found.push({ bbox: p.bbox, score: p.score, id: blip.id, cls, dist: blip.dist, clipped });
+      trackMotion(blip, now);
+
+      // Annäherungs-Alarm (mit 0,5 m Abstand zum Zurücksetzen, damit er nicht flattert)
+      if (settings.alarm > 0) {
+        if (!blip.alarmed && blip.dist < settings.alarm) { blip.alarmed = true; alarmProximity(blip); }
+        else if (blip.alarmed && blip.dist > settings.alarm + 0.5) blip.alarmed = false;
+      }
+      found.push({ bbox: p.bbox, score: p.score, id: blip.id, cls, dist: blip.dist, clipped, vr: blip.vr });
+    }
+
+    if (calib) {
+      if (calibRaw < Infinity) calib.samples.push(calibRaw);
+      statusEl.textContent = `📏 Kalibriere… (${calib.samples.length})`;
+      if (now > calib.until) finishCalibration();
     }
 
     detections = found;
@@ -813,7 +1003,7 @@ async function detectLoop() {
       return now - b.lastSeen < (inView ? LOST_IN_VIEW : MEMORY_TIME);
     });
     const remembered = blips.length - found.length;
-    statusEl.textContent = `Im Blick: ${found.length}` + (remembered > 0 ? ` · Gemerkt: ${remembered}` : '');
+    if (!calib && !modelLoading && now > statusHoldUntil) statusEl.textContent = `Im Blick: ${found.length}` + (remembered > 0 ? ` · Gemerkt: ${remembered}` : '');
     updateCounts();
   }
   maybeSwitchCamera(performance.now());
@@ -867,7 +1057,7 @@ function drawBoxes(now) {
     ctx.stroke();
 
     // Beschriftung: Art, Nummer, Entfernung, Sicherheit
-    const label = `${laser.on && d.id === laser.targetId ? '🎯 ' : ''}${CLASSES[d.cls].name} #${d.id} · ${d.clipped ? '< ' : '≈ '}${fmtDist(d.dist)} · ${Math.round(d.score * 100)}%`;
+    const label = `${laser.on && d.id === laser.targetId ? '🎯 ' : ''}${CLASSES[d.cls].name} #${d.id} · ${d.clipped ? '< ' : '≈ '}${fmtDist(d.dist)}${d.vr < -MOVE_MIN ? ' ⬇ näher' : d.vr > MOVE_MIN ? ' ⬆ weg' : ''} · ${Math.round(d.score * 100)}%`;
     const tw = ctx.measureText(label).width + 10;
     const ly = sy > 24 ? sy - 24 : sy;
     ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
@@ -942,6 +1132,16 @@ function drawRadar(now) {
     ctx.stroke();
   }
 
+  // Alarm-Abstand als gestrichelter roter Ring
+  if (settings.alarm > 0 && settings.alarm < range) {
+    ctx.strokeStyle = 'rgba(255, 60, 60, 0.8)';
+    ctx.setLineDash([4, 4]);
+    ctx.beginPath();
+    ctx.arc(rx, ry, R * settings.alarm / range, 0, TAU);
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
+
   // Objekte als Punkte
   ctx.font = '11px sans-serif';
   ctx.textBaseline = 'middle';
@@ -973,6 +1173,23 @@ function drawRadar(now) {
     ctx.arc(x, y, outside ? 4 : 6, 0, TAU);
     if (live) ctx.fill(); else ctx.stroke();
     ctx.fillText('#' + b.id, x + 9, y);
+
+    // Bewegungspfeil: zeigt, wohin sich das Objekt in etwa 2 Sekunden bewegt
+    const speed = Math.hypot(b.vx || 0, b.vy || 0);
+    if (live && speed > MOVE_MIN) {
+      const dir = Math.atan2(b.vx, b.vy) - heading;
+      const len = Math.max(10, Math.min(R * 0.35, speed * 2 / range * R));
+      const ex = x + Math.sin(dir) * len, ey = y - Math.cos(dir) * len;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(x, y);
+      ctx.lineTo(ex, ey);
+      ctx.moveTo(ex, ey);
+      ctx.lineTo(ex - Math.sin(dir - 0.5) * 6, ey + Math.cos(dir - 0.5) * 6);
+      ctx.moveTo(ex, ey);
+      ctx.lineTo(ex - Math.sin(dir + 0.5) * 6, ey + Math.cos(dir + 0.5) * 6);
+      ctx.stroke();
+    }
   }
 }
 
@@ -996,6 +1213,12 @@ function render() {
     y: canvas.height - R - 32 - parseFloat(safe.paddingBottom)
   };
   drawRadar(now);
+
+  // Alarm: pulsierender roter Rand und Meldung
+  const alarmOn = now < alarmUntil;
+  $('alarm').style.borderWidth = alarmOn ? `${6 + 6 * Math.abs(Math.sin(now / 150))}px` : '0';
+  $('alarmText').hidden = !alarmOn;
+  if (alarmOn) $('alarmText').textContent = alarmMsg;
 
   headingEl.textContent = (hasCompass ? `🧭 ${headingText()}` : '🧭 kein Kompass')
     + (facing === 'user' ? ' · vorne' : ' · hinten')
