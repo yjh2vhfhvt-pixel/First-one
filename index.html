@@ -7,8 +7,14 @@
 <style>
   html, body { margin:0; height:100%; background:#000; overflow:hidden; font-family:sans-serif; }
   video, canvas { position:fixed; top:0; left:0; width:100%; height:100%; object-fit:cover; }
-  #status { position:fixed; top:12px; left:12px; color:#0f0; background:rgba(0,0,0,.6);
-            padding:6px 12px; border-radius:8px; z-index:2; }
+  .hud { position:fixed; z-index:2; color:#0f0; background:rgba(0,0,0,.6);
+         padding:6px 12px; border-radius:8px; }
+  #status { top:12px; left:12px; }
+  #heading { top:12px; left:50%; transform:translateX(-50%); font-weight:bold; font-size:18px; }
+  #controls { position:fixed; top:12px; right:12px; z-index:2; display:flex; gap:8px; }
+  #controls button { background:rgba(0,0,0,.6); color:#0f0; border:1px solid #0f0;
+                     border-radius:8px; font-size:20px; width:44px; height:44px; cursor:pointer; }
+  #controls button.off { color:#060; border-color:#060; }
   #start { position:fixed; inset:0; z-index:3; background:rgba(0,0,0,.85); color:#0f0;
            font-size:22px; border:none; cursor:pointer; }
 </style>
@@ -16,8 +22,13 @@
 <body>
 <video id="video" autoplay playsinline muted></video>
 <canvas id="overlay"></canvas>
-<div id="status">Lade KI-Modell…</div>
-<button id="start" hidden>Kamera starten</button>
+<div id="status" class="hud">Lade KI-Modell…</div>
+<div id="heading" class="hud" hidden></div>
+<div id="controls" hidden>
+  <button id="soundBtn" title="Ton an/aus">🔊</button>
+  <button id="vibBtn" title="Vibration an/aus">📳</button>
+</div>
+<button id="start" hidden>Radar starten<br><small>(Kamera, Kompass &amp; Ton)</small></button>
 
 <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0/dist/tf.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd@2.2.3/dist/coco-ssd.min.js"></script>
@@ -26,21 +37,44 @@ const video = document.getElementById('video');
 const canvas = document.getElementById('overlay');
 const ctx = canvas.getContext('2d');
 const statusEl = document.getElementById('status');
+const headingEl = document.getElementById('heading');
+const controlsEl = document.getElementById('controls');
+const soundBtn = document.getElementById('soundBtn');
+const vibBtn = document.getElementById('vibBtn');
 const startBtn = document.getElementById('start');
 
-const FOV = 1.0;          // Blickwinkel der Kamera in Radiant (ca. 57°)
-const SWEEP_SPEED = 1.5;  // Drehgeschwindigkeit des Radarstrahls in Radiant/Sekunde
-const FADE_TIME = 2.5;    // Sekunden, bis ein Punkt verblasst
-const MIN_SCORE = 0.5;    // Mindest-Konfidenz für eine Person
-const BOX_TIMEOUT = 500;  // ms, nach denen ein Rahmen ohne neue Erkennung verschwindet
+const FOV = 1.0;            // Blickwinkel der Kamera in Radiant (ca. 57°)
+const SWEEP_SPEED = 1.5;    // Drehgeschwindigkeit des Radarstrahls in Radiant/Sekunde
+const FADE_TIME = 2.5;      // Sekunden, bis ein Punkt nach dem Strahl verblasst
+const MIN_SCORE = 0.5;      // Mindest-Konfidenz für eine Person
+const BOX_TIMEOUT = 500;    // ms, nach denen ein Rahmen ohne neue Erkennung verschwindet
+const LOST_IN_VIEW = 2000;  // ms: Person im Sichtfeld, aber nicht mehr erkannt -> entfernen
+const MEMORY_TIME = 30000;  // ms: Person außerhalb des Sichtfelds bleibt so lange gemerkt
+const ALERT_COOLDOWN = 1000;// ms zwischen zwei "Neue Person"-Signalen
+const TAU = Math.PI * 2;
 
 let model = null;
-let blips = [];           // { id, angle, dist, lastSeen, lastHit }
-let persons = [];         // aktuelle Erkennungen: { bbox, score, id }
+let blips = [];             // { id, bearing, dist, lastSeen, lastHit }
+let persons = [];           // aktuelle Erkennungen: { bbox, score, id }
 let personsTime = 0;
 let nextId = 1;
 let sweep = 0;
 let lastFrame = performance.now();
+
+// Kompass: Blickrichtung der Kamera in Radiant (0 = Norden, im Uhrzeigersinn)
+let heading = 0;
+let hasCompass = false;
+let hx = 0, hy = 1;         // geglätteter Richtungsvektor
+
+// Ton & Vibration
+let audio = null;
+let soundOn = true;
+let vibrateOn = 'vibrate' in navigator;
+let lastAlert = 0;
+if (!vibrateOn) vibBtn.hidden = true;
+
+// Winkel auf (-PI, PI] bringen
+const wrap = a => ((a % TAU) + TAU + Math.PI) % TAU - Math.PI;
 
 function resize() {
   canvas.width = innerWidth;
@@ -59,21 +93,128 @@ async function init() {
   }
 }
 
-async function startCamera() {
+/* ---------------- Kompass ---------------- */
+
+// Richtung der Rückkamera aus alpha/beta/gamma (Formel aus der W3C-Spezifikation)
+function cameraHeading(alpha, beta, gamma) {
+  const a = alpha * Math.PI / 180, b = beta * Math.PI / 180, g = gamma * Math.PI / 180;
+  const cX = Math.cos(b), cY = Math.cos(g), cZ = Math.cos(a);
+  const sX = Math.sin(b), sY = Math.sin(g), sZ = Math.sin(a);
+  const vx = -cZ * sY - sZ * sX * cY;
+  const vy = -sZ * sY + cZ * sX * cY;
+  return (Math.atan2(vx, vy) + TAU) % TAU;
+}
+
+function onOrientation(e) {
+  let h;
+  if (typeof e.webkitCompassHeading === 'number') {
+    h = e.webkitCompassHeading * Math.PI / 180;           // iOS
+  } else if (e.absolute && e.alpha != null) {
+    h = cameraHeading(e.alpha, e.beta, e.gamma);         // Android
+  } else {
+    return;
+  }
+  hasCompass = true;
+  // Glätten über Vektoren, damit der Sprung 359° -> 0° kein Problem ist
+  hx += (Math.sin(h) - hx) * 0.2;
+  hy += (Math.cos(h) - hy) * 0.2;
+  heading = (Math.atan2(hx, hy) + TAU) % TAU;
+}
+
+async function startCompass() {
+  // iOS 13+ verlangt eine Erlaubnis, die direkt im Klick angefragt werden muss
+  if (typeof DeviceOrientationEvent !== 'undefined' &&
+      typeof DeviceOrientationEvent.requestPermission === 'function') {
+    try {
+      if (await DeviceOrientationEvent.requestPermission() !== 'granted') return;
+    } catch { return; }
+  }
+  if ('ondeviceorientationabsolute' in window) {
+    addEventListener('deviceorientationabsolute', onOrientation);
+  } else {
+    addEventListener('deviceorientation', onOrientation);
+  }
+}
+
+function headingText() {
+  const deg = Math.round(heading * 180 / Math.PI) % 360;
+  const dirs = ['N', 'NO', 'O', 'SO', 'S', 'SW', 'W', 'NW'];
+  return `${deg}° ${dirs[Math.round(deg / 45) % 8]}`;
+}
+
+/* ---------------- Ton ---------------- */
+
+function tone(freq, start, duration, volume) {
+  const osc = audio.createOscillator();
+  const gain = audio.createGain();
+  osc.type = 'sine';
+  osc.frequency.value = freq;
+  gain.gain.setValueAtTime(0, start);
+  gain.gain.linearRampToValueAtTime(volume, start + 0.01);
+  gain.gain.exponentialRampToValueAtTime(0.0001, start + duration);
+  osc.connect(gain).connect(audio.destination);
+  osc.start(start);
+  osc.stop(start + duration);
+}
+
+// Deutliches Doppel-Signal für eine neu erkannte Person
+function alertNewPerson() {
+  const now = performance.now();
+  if (now - lastAlert < ALERT_COOLDOWN) return;
+  lastAlert = now;
+  if (soundOn && audio) {
+    const t = audio.currentTime;
+    tone(880, t, 0.15, 0.4);
+    tone(1320, t + 0.17, 0.25, 0.4);
+  }
+  if (vibrateOn) navigator.vibrate([120, 60, 120]);
+}
+
+// Leiser Sonar-Ping, wenn der Strahl über eine Person streicht
+function sweepPing(dist) {
+  if (!soundOn || !audio) return;
+  tone(600 + 600 * dist, audio.currentTime, 0.3, 0.12);
+}
+
+soundBtn.onclick = () => {
+  soundOn = !soundOn;
+  soundBtn.textContent = soundOn ? '🔊' : '🔇';
+  soundBtn.classList.toggle('off', !soundOn);
+  if (soundOn && audio) audio.resume();
+};
+vibBtn.onclick = () => {
+  vibrateOn = !vibrateOn;
+  vibBtn.classList.toggle('off', !vibrateOn);
+};
+
+/* ---------------- Start ---------------- */
+
+async function start() {
+  // Ton und Kompass müssen direkt im Klick freigeschaltet werden
+  const AC = window.AudioContext || window.webkitAudioContext;
+  if (AC) { audio = new AC(); audio.resume(); }
+  const compassReady = startCompass();
+
   const stream = await navigator.mediaDevices.getUserMedia({
     video: { facingMode: 'environment' },
     audio: false
   });
   video.srcObject = stream;
   await video.play();
+  await compassReady;
+
   startBtn.hidden = true;
+  controlsEl.hidden = false;
+  headingEl.hidden = false;
   statusEl.textContent = 'Suche Menschen…';
   detectLoop();
   requestAnimationFrame(render);
 }
-startBtn.onclick = () => startCamera().catch(e => statusEl.textContent = 'Kamera-Fehler: ' + e.message);
+startBtn.onclick = () => start().catch(e => statusEl.textContent = 'Kamera-Fehler: ' + e.message);
 
-// Erkennung läuft unabhängig vom Zeichnen, etwa 10× pro Sekunde
+/* ---------------- Erkennung ---------------- */
+
+// Läuft unabhängig vom Zeichnen, etwa 10× pro Sekunde
 async function detectLoop() {
   if (video.readyState >= 2) {
     const preds = await model.detect(video);
@@ -84,8 +225,9 @@ async function detectLoop() {
     for (const p of preds) {
       if (p.class !== 'person' || p.score < MIN_SCORE) continue;
       const [x, y, w, h] = p.bbox;
-      // Horizontale Mitte im Bild -> Winkel relativ zur Blickrichtung
+      // Horizontale Mitte im Bild -> Winkel zur Blickrichtung -> Himmelsrichtung
       const angle = ((x + w / 2) / video.videoWidth - 0.5) * FOV;
+      const bearing = (heading + angle + TAU) % TAU;
       // Große Person im Bild = nah
       const dist = Math.min(1, h / video.videoHeight);
 
@@ -93,27 +235,35 @@ async function detectLoop() {
       let blip = null, best = Infinity;
       for (const b of blips) {
         if (used.has(b)) continue;
-        const da = Math.abs(b.angle - angle), dd = Math.abs(b.dist - dist);
+        const da = Math.abs(wrap(b.bearing - bearing)), dd = Math.abs(b.dist - dist);
         if (da < 0.15 && dd < 0.2 && da + dd < best) { best = da + dd; blip = b; }
       }
       if (!blip) {
         blip = { id: nextId++, lastHit: -1e9 };
         blips.push(blip);
+        alertNewPerson();
       }
       used.add(blip);
-      Object.assign(blip, { angle, dist, lastSeen: now });
+      Object.assign(blip, { bearing, dist, lastSeen: now });
       found.push({ bbox: p.bbox, score: p.score, id: blip.id });
     }
 
     persons = found;
     personsTime = now;
 
-    // Punkte entfernen, die länger nicht gesehen wurden
-    blips = blips.filter(b => now - b.lastSeen < 2000);
-    statusEl.textContent = `Personen erkannt: ${found.length}`;
+    // Im Sichtfeld verschwundene Personen schnell entfernen,
+    // Personen außerhalb des Sichtfelds (z. B. hinter dir) länger merken
+    blips = blips.filter(b => {
+      const inView = Math.abs(wrap(b.bearing - heading)) < FOV / 2;
+      return now - b.lastSeen < (inView ? LOST_IN_VIEW : MEMORY_TIME);
+    });
+    const remembered = blips.length - found.length;
+    statusEl.textContent = `Im Blick: ${found.length}` + (remembered > 0 ? ` · Gemerkt: ${remembered}` : '');
   }
   setTimeout(detectLoop, 100);
 }
+
+/* ---------------- Zeichnen ---------------- */
 
 // Rechnet Videokoordinaten in Bildschirmkoordinaten um (berücksichtigt object-fit: cover)
 function videoToScreen() {
@@ -130,7 +280,6 @@ function drawPersonBoxes(now) {
   if (now - personsTime > BOX_TIMEOUT || !video.videoWidth) return;
   const { scale, ox, oy } = videoToScreen();
 
-  ctx.lineWidth = 3;
   ctx.font = 'bold 16px sans-serif';
   ctx.textBaseline = 'top';
 
@@ -140,6 +289,7 @@ function drawPersonBoxes(now) {
     const sw = w * scale, sh = h * scale;
 
     // Rahmen
+    ctx.lineWidth = 3;
     ctx.strokeStyle = '#0f0';
     ctx.shadowColor = '#0f0';
     ctx.shadowBlur = 8;
@@ -155,7 +305,6 @@ function drawPersonBoxes(now) {
     ctx.moveTo(sx, sy + sh - c); ctx.lineTo(sx, sy + sh); ctx.lineTo(sx + c, sy + sh);
     ctx.moveTo(sx + sw - c, sy + sh); ctx.lineTo(sx + sw, sy + sh); ctx.lineTo(sx + sw, sy + sh - c);
     ctx.stroke();
-    ctx.lineWidth = 3;
 
     // Beschriftung
     const label = `Person #${p.id}  ${Math.round(p.score * 100)}%`;
@@ -168,32 +317,31 @@ function drawPersonBoxes(now) {
   }
 }
 
-function render() {
-  const now = performance.now();
-  const dt = (now - lastFrame) / 1000;
-  lastFrame = now;
-  sweep = (sweep + SWEEP_SPEED * dt) % (Math.PI * 2);
-
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-  drawPersonBoxes(now);
-
-  // Radar in der unteren rechten Ecke
-  const R = Math.min(canvas.width, canvas.height) * 0.3;
-  const rx = canvas.width - R - 20;
-  const ry = canvas.height - R - 20;
-
+function drawRadar(now, R, rx, ry) {
   ctx.fillStyle = 'rgba(0, 25, 0, 0.6)';
   ctx.beginPath();
-  ctx.arc(rx, ry, R, 0, Math.PI * 2);
+  ctx.arc(rx, ry, R, 0, TAU);
   ctx.fill();
 
   ctx.strokeStyle = 'rgba(0, 255, 0, 0.5)';
   ctx.lineWidth = 1.5;
   for (const f of [0.33, 0.66, 1]) {
     ctx.beginPath();
-    ctx.arc(rx, ry, R * f, 0, Math.PI * 2);
+    ctx.arc(rx, ry, R * f, 0, TAU);
     ctx.stroke();
+  }
+
+  // Himmelsrichtungen drehen sich mit, oben ist immer die Blickrichtung
+  if (hasCompass) {
+    ctx.font = 'bold 13px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    [['N', 0], ['O', Math.PI / 2], ['S', Math.PI], ['W', -Math.PI / 2]].forEach(([l, a]) => {
+      const rel = a - heading;
+      ctx.fillStyle = l === 'N' ? '#f44' : 'rgba(0, 255, 0, 0.8)';
+      ctx.fillText(l, rx + Math.sin(rel) * (R - 10), ry - Math.cos(rel) * (R - 10));
+    });
+    ctx.textAlign = 'start';
   }
 
   // Sichtfeld der Kamera als Kegel
@@ -204,34 +352,61 @@ function render() {
   ctx.closePath();
   ctx.fill();
 
-  // Radarstrahl (0 = oben = Blickrichtung der Kamera)
-  ctx.strokeStyle = 'rgba(0, 255, 0, 0.9)';
-  ctx.beginPath();
-  ctx.moveTo(rx, ry);
-  ctx.lineTo(rx + Math.sin(sweep) * R, ry - Math.cos(sweep) * R);
-  ctx.stroke();
+  // Radarstrahl mit Nachleuchten (0 = oben = Blickrichtung der Kamera)
+  for (let i = 0; i < 12; i++) {
+    const a = sweep - i * 0.04;
+    ctx.strokeStyle = `rgba(0, 255, 0, ${0.9 * (1 - i / 12)})`;
+    ctx.beginPath();
+    ctx.moveTo(rx, ry);
+    ctx.lineTo(rx + Math.sin(a) * R, ry - Math.cos(a) * R);
+    ctx.stroke();
+  }
 
   // Personen als Punkte
   ctx.font = '11px sans-serif';
   ctx.textBaseline = 'middle';
   for (const b of blips) {
-    // Trifft der Strahl den Winkel der Person?
-    let d = ((sweep - b.angle) % (2 * Math.PI) + 2 * Math.PI) % (2 * Math.PI);
-    if (Math.min(d, 2 * Math.PI - d) < 0.08) b.lastHit = now;
+    const rel = wrap(b.bearing - heading);
+
+    // Trifft der Strahl die Person?
+    if (Math.abs(wrap(sweep - rel)) < 0.08 && now - b.lastHit > 500) {
+      b.lastHit = now;
+      sweepPing(b.dist);
+    }
 
     const age = (now - b.lastHit) / 1000;
-    if (age < FADE_TIME) {
-      const r = R * (0.95 - 0.8 * b.dist);
-      const x = rx + Math.sin(b.angle) * r;
-      const y = ry - Math.cos(b.angle) * r;
-      const alpha = 1 - age / FADE_TIME;
-      ctx.fillStyle = `rgba(0, 255, 0, ${alpha})`;
-      ctx.beginPath();
-      ctx.arc(x, y, 6, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.fillText('#' + b.id, x + 9, y);
-    }
+    if (age >= FADE_TIME) continue;
+
+    // Gemerkte Personen (nicht mehr im Bild) werden blasser und hohl gezeichnet
+    const live = now - b.lastSeen < BOX_TIMEOUT;
+    const memory = live ? 1 : Math.max(0.25, 1 - (now - b.lastSeen) / MEMORY_TIME);
+    const alpha = (1 - age / FADE_TIME) * memory;
+
+    const r = R * (0.95 - 0.8 * b.dist);
+    const x = rx + Math.sin(rel) * r;
+    const y = ry - Math.cos(rel) * r;
+    ctx.fillStyle = ctx.strokeStyle = `rgba(0, 255, 0, ${alpha})`;
+    ctx.beginPath();
+    ctx.arc(x, y, 6, 0, TAU);
+    if (live) ctx.fill(); else { ctx.lineWidth = 2; ctx.stroke(); }
+    ctx.fillText('#' + b.id, x + 9, y);
   }
+}
+
+function render() {
+  const now = performance.now();
+  const dt = (now - lastFrame) / 1000;
+  lastFrame = now;
+  sweep = (sweep + SWEEP_SPEED * dt) % TAU;
+
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  drawPersonBoxes(now);
+
+  // Radar in der unteren rechten Ecke
+  const R = Math.min(canvas.width, canvas.height) * 0.3;
+  drawRadar(now, R, canvas.width - R - 20, canvas.height - R - 20);
+
+  headingEl.textContent = hasCompass ? `🧭 ${headingText()}` : '🧭 kein Kompass';
 
   requestAnimationFrame(render);
 }
