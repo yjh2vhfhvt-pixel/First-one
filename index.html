@@ -31,6 +31,7 @@
   #controls button { background:rgba(0,0,0,.6); color:#0f0; border:1px solid #0f0;
                      border-radius:8px; font-size:20px; width:44px; height:44px; cursor:pointer; }
   #controls button.off { color:#060; border-color:#060; }
+  video.mirror { transform:scaleX(-1); }
   #legend { position:fixed; z-index:2; bottom:calc(12px + var(--sb)); left:calc(12px + var(--sl));
             display:flex; flex-direction:column; gap:4px; }
   #legend button { display:flex; align-items:center; gap:6px; background:rgba(0,0,0,.6);
@@ -55,6 +56,7 @@
 </div>
 <div id="controls" hidden>
   <button id="installBtn" title="Als App installieren" hidden>📲</button>
+  <button id="camBtn" title="Kamera: automatisch wechseln / hinten / vorne" hidden>🔄</button>
   <button id="soundBtn" title="Ton an/aus">🔊</button>
   <button id="vibBtn" title="Vibration an/aus">📳</button>
 </div>
@@ -91,13 +93,17 @@ const CLASSES = {
 };
 const color = (cls, a = 1) => `rgba(${CLASSES[cls].rgb}, ${a})`;
 
-const LONG_FOV = 1.15;      // Blickwinkel über die lange Bildseite (ca. 66°, typische Handy-Hauptkamera)
+// Blickwinkel über die lange Bildseite (typische Handy-Kameras)
+const LONG_FOV = { environment: 1.15, user: 1.30 };  // hinten ca. 66°, vorne ca. 75°
+const CAM_DWELL = 3000;     // ms pro Kamera im automatischen Wechsel
+const SELF_DIST = 2.5;      // m: angeschnittene Person so nah vor der Frontkamera = du selbst
 const SWEEP_SPEED = 1.5;    // Drehgeschwindigkeit des Radarstrahls in Radiant/Sekunde
 const FADE_TIME = 2.5;      // Sekunden, bis ein Punkt nach dem Strahl verblasst
 const MIN_SCORE = 0.5;      // Mindest-Konfidenz einer Erkennung
 const BOX_TIMEOUT = 500;    // ms, nach denen ein Rahmen ohne neue Erkennung verschwindet
 const LOST_IN_VIEW = 2000;  // ms: im Sichtfeld, aber nicht mehr erkannt -> entfernen
 const MEMORY_TIME = 30000;  // ms: außerhalb des Sichtfelds so lange merken
+const RADAR_SIZE = 0.22;    // Radius des Radars relativ zur kürzeren Bildschirmseite
 const ALERT_COOLDOWN = 1000;// ms zwischen zwei Signalen für neue Objekte
 const RANGES = [10, 20, 50];// Radar-Reichweiten in Metern (Tippen aufs Radar wechselt)
 const TAU = Math.PI * 2;
@@ -109,7 +115,9 @@ let detectionsTime = 0;
 let nextId = 1;
 let sweep = 0;
 let lastFrame = performance.now();
-let fov = 1.0;              // aktueller horizontaler Blickwinkel, wird aus dem Videoformat berechnet
+let aspect = 1;            // Bildbreite / lange Bildseite, für den Blickwinkel
+// Horizontaler Blickwinkel einer Kamera im aktuellen Videoformat
+const fovOf = cam => 2 * Math.atan(Math.tan(LONG_FOV[cam] / 2) * aspect);
 let radar = { x: 0, y: 0, R: 0 };
 
 // Einstellungen (werden im Browser gemerkt)
@@ -117,6 +125,7 @@ const settings = Object.assign({
   sound: true,
   vibrate: 'vibrate' in navigator,
   range: 1,
+  camMode: 'auto',         // 'auto' = wechseln, 'environment' = hinten, 'user' = vorne
   enabled: Object.keys(CLASSES)
 }, load('radar-settings'));
 function load(key) { try { return JSON.parse(localStorage.getItem(key)) || {}; } catch { return {}; } }
@@ -312,6 +321,58 @@ function updateCounts() {
   }
 }
 
+/* ---------------- Kamera ---------------- */
+
+let facing = 'environment'; // aktive Kamera: 'environment' = hinten, 'user' = vorne
+let twoCams = false;
+let switching = false;
+let camGen = 0;             // zählt Kamerawechsel, um veraltete Erkennungen zu verwerfen
+let cameraSince = 0;
+
+async function openCamera(want) {
+  switching = true;
+  camGen++;
+  detections = [];
+  // Viele Handys können nur eine Kamera gleichzeitig öffnen
+  if (video.srcObject) video.srcObject.getTracks().forEach(t => t.stop());
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: want, width: { ideal: 1280 }, height: { ideal: 720 } },
+      audio: false
+    });
+    video.srcObject = stream;
+    await video.play();
+    facing = want;
+    video.classList.toggle('mirror', facing === 'user');  // Selfie-Ansicht spiegeln
+  } finally {
+    cameraSince = performance.now();
+    switching = false;
+  }
+}
+
+// Richtung, in die die aktive Kamera schaut (Frontkamera = genau hinter dir)
+const cameraDir = () => (heading + (facing === 'user' ? Math.PI : 0)) % TAU;
+
+function updateCamButton() {
+  const icons = { auto: '🔄', environment: '📷', user: '🤳' };
+  $('camBtn').textContent = icons[settings.camMode];
+}
+$('camBtn').onclick = () => {
+  const order = ['auto', 'environment', 'user'];
+  settings.camMode = order[(order.indexOf(settings.camMode) + 1) % order.length];
+  save(); updateCamButton();
+  if (settings.camMode !== 'auto' && settings.camMode !== facing && !switching) {
+    openCamera(settings.camMode).catch(e => statusEl.textContent = 'Kamera-Fehler: ' + e.message);
+  }
+};
+
+// Im Automatik-Modus regelmäßig zwischen hinten und vorne wechseln
+function maybeSwitchCamera(now) {
+  if (!twoCams || switching || settings.camMode !== 'auto' || now - cameraSince < CAM_DWELL) return;
+  openCamera(facing === 'user' ? 'environment' : 'user')
+    .catch(() => { twoCams = false; $('camBtn').hidden = true; });
+}
+
 /* ---------------- Start ---------------- */
 
 async function start() {
@@ -320,13 +381,14 @@ async function start() {
   if (AC) { audio = new AC(); audio.resume(); }
   const compassReady = startCompass();
 
-  const stream = await navigator.mediaDevices.getUserMedia({
-    video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } },
-    audio: false
-  });
-  video.srcObject = stream;
-  await video.play();
+  await openCamera(settings.camMode === 'user' ? 'user' : 'environment');
   await compassReady;
+
+  // Zwei Kameras vorhanden? Sonst gibt es nichts zu wechseln.
+  const devices = await navigator.mediaDevices.enumerateDevices().catch(() => []);
+  twoCams = devices.filter(d => d.kind === 'videoinput').length >= 2;
+  $('camBtn').hidden = !twoCams;
+  updateCamButton();
   keepAwake();
 
   startBtn.hidden = true;
@@ -351,17 +413,19 @@ canvas.addEventListener('click', e => {
 // Brennweite in Pixeln aus dem angenommenen Blickwinkel der Kamera
 function focalLength() {
   const long = Math.max(video.videoWidth, video.videoHeight);
-  return (long / 2) / Math.tan(LONG_FOV / 2);
+  return (long / 2) / Math.tan(LONG_FOV[facing] / 2);
 }
 
 // Läuft unabhängig vom Zeichnen, etwa 10× pro Sekunde
 async function detectLoop() {
-  if (video.readyState >= 2) {
+  if (video.readyState >= 2 && !switching) {
+    const gen = camGen;
     const preds = await model.detect(video, 20);
     const now = performance.now();
+    if (gen !== camGen) { setTimeout(detectLoop, 0); return; }  // Kamera wurde inzwischen gewechselt
     const vw = video.videoWidth, vh = video.videoHeight;
     const f = focalLength();
-    fov = 2 * Math.atan((vw / 2) / f);
+    aspect = vw / Math.max(vw, vh);
 
     const used = new Set();   // jeder Punkt darf pro Durchlauf nur einem Objekt zugeordnet werden
     const found = [];
@@ -371,13 +435,16 @@ async function detectLoop() {
       const cls = p.class;
       const [x, y, w, h] = p.bbox;
 
-      // Winkel zur Blickrichtung -> Himmelsrichtung
-      const angle = Math.atan((x + w / 2 - vw / 2) / f);
-      const bearing = (heading + angle + TAU) % TAU;
       // Entfernung über die typische Höhe: Abstand = echte Höhe × Brennweite / Höhe im Bild
       const dist = CLASSES[cls].height * f / h;
+      // Winkel zur Blickrichtung der Kamera -> Himmelsrichtung
+      // (rechts im Rohbild ist rechts aus Sicht der Kamera, auch bei der Frontkamera)
+      const angle = Math.atan((x + w / 2 - vw / 2) / f);
+      const bearing = (cameraDir() + angle + TAU) % TAU;
       // Am oberen/unteren Bildrand abgeschnitten -> in Wahrheit näher als berechnet
       const clipped = y <= 2 || y + h >= vh - 2;
+      // Eine nahe, unten angeschnittene Person vor der Frontkamera bist du selbst
+      if (facing === 'user' && cls === 'person' && clipped && dist < SELF_DIST) continue;
 
       // Nächstgelegenen bekannten Punkt derselben Art aktualisieren, sonst neuen anlegen
       let blip = null, best = Infinity;
@@ -406,15 +473,17 @@ async function detectLoop() {
     detectionsTime = now;
 
     // Im Sichtfeld verschwundene Objekte schnell entfernen,
-    // Objekte außerhalb des Sichtfelds (z. B. hinter dir) länger merken
+    // Objekte außerhalb des Sichtfelds (z. B. auf der anderen Seite) länger merken
+    const dir = cameraDir();
     blips = blips.filter(b => {
-      const inView = Math.abs(wrap(b.bearing - heading)) < fov / 2;
+      const inView = Math.abs(wrap(b.bearing - dir)) < fovOf(facing) / 2;
       return now - b.lastSeen < (inView ? LOST_IN_VIEW : MEMORY_TIME);
     });
     const remembered = blips.length - found.length;
     statusEl.textContent = `Im Blick: ${found.length}` + (remembered > 0 ? ` · Gemerkt: ${remembered}` : '');
     updateCounts();
   }
+  maybeSwitchCamera(performance.now());
   setTimeout(detectLoop, 100);
 }
 
@@ -440,7 +509,9 @@ function drawBoxes(now) {
 
   for (const d of detections) {
     const [x, y, w, h] = d.bbox;
-    const sx = ox + x * scale, sy = oy + y * scale;
+    // Frontkamera wird gespiegelt angezeigt, also auch die Rahmen spiegeln
+    const sx = facing === 'user' ? canvas.width - ox - (x + w) * scale : ox + x * scale;
+    const sy = oy + y * scale;
     const sw = w * scale, sh = h * scale;
     const col = color(d.cls);
 
@@ -515,13 +586,18 @@ function drawRadar(now) {
   }
   ctx.textAlign = 'start';
 
-  // Sichtfeld der Kamera als Kegel
-  ctx.fillStyle = 'rgba(0, 255, 0, 0.08)';
-  ctx.beginPath();
-  ctx.moveTo(rx, ry);
-  ctx.arc(rx, ry, R, -Math.PI / 2 - fov / 2, -Math.PI / 2 + fov / 2);
-  ctx.closePath();
-  ctx.fill();
+  // Sichtfeld der Kamera als Kegel: oben = Rückkamera, unten = Frontkamera.
+  // Im Wechselbetrieb sind beide zu sehen, die aktive heller.
+  const cones = settings.camMode === 'auto' && twoCams ? ['environment', 'user'] : [facing];
+  for (const cam of cones) {
+    const mid = cam === 'user' ? Math.PI / 2 : -Math.PI / 2, fov = fovOf(cam);
+    ctx.fillStyle = `rgba(0, 255, 0, ${cam === facing && !switching ? 0.14 : 0.05})`;
+    ctx.beginPath();
+    ctx.moveTo(rx, ry);
+    ctx.arc(rx, ry, R, mid - fov / 2, mid + fov / 2);
+    ctx.closePath();
+    ctx.fill();
+  }
 
   // Radarstrahl mit Nachleuchten (0 = oben = Blickrichtung der Kamera)
   for (let i = 0; i < 12; i++) {
@@ -578,7 +654,7 @@ function render() {
 
   // Radar in der unteren rechten Ecke (mit Abstand zu Notch/Home-Leiste)
   const safe = getComputedStyle($('safe'));
-  const R = Math.min(canvas.width, canvas.height) * 0.3;
+  const R = Math.min(canvas.width, canvas.height) * RADAR_SIZE;
   radar = {
     R,
     x: canvas.width - R - 20 - parseFloat(safe.paddingRight),
@@ -586,7 +662,8 @@ function render() {
   };
   drawRadar(now);
 
-  headingEl.textContent = hasCompass ? `🧭 ${headingText()}` : '🧭 kein Kompass';
+  headingEl.textContent = (hasCompass ? `🧭 ${headingText()}` : '🧭 kein Kompass')
+    + (facing === 'user' ? ' · vorne' : ' · hinten');
 
   requestAnimationFrame(render);
 }
