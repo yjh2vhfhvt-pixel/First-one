@@ -1,6 +1,6 @@
 // Service Worker: macht die App installierbar und offline nutzbar.
 // Bei Änderungen an den App-Dateien die Versionsnummer erhöhen.
-const CACHE = 'radar-v1';
+const CACHE = 'radar-v2';
 const LIB_CACHE = 'radar-lib'; // Bibliotheken & Modell bleiben bei Updates erhalten
 const APP_FILES = [
   './',
@@ -30,7 +30,8 @@ self.addEventListener('fetch', e => {
   if (new URL(req.url).origin === location.origin) {
     // Eigene Dateien: erst Netz (damit Updates sofort ankommen), offline aus dem Cache
     e.respondWith(
-      fetch(req)
+      // no-cache: am Server nachfragen statt eine bis zu 10 Minuten alte Kopie zu nehmen
+      fetch(req, { cache: 'no-cache' })
         .then(res => {
           const copy = res.clone();
           caches.open(CACHE).then(c => c.put(req, copy));

@@ -65,6 +65,7 @@
   Radar starten
   <small>Kamera, Kompass &amp; Ton</small>
   <div class="tip" id="iosTip" hidden>Tipp: Über „Teilen“ → „Zum Home-Bildschirm“<br>wird das Radar zur App.</div>
+  <div class="tip" id="version"></div>
 </button>
 <div id="safe"></div>
 
@@ -107,6 +108,7 @@ const RADAR_SIZE = 0.22;    // Radius des Radars relativ zur kürzeren Bildschir
 const ALERT_COOLDOWN = 1000;// ms zwischen zwei Signalen für neue Objekte
 const RANGES = [10, 20, 50];// Radar-Reichweiten in Metern (Tippen aufs Radar wechselt)
 const TAU = Math.PI * 2;
+const APP_VERSION = '1.5';  // bei jedem Update zusammen mit version.json erhöhen
 
 let model = null;
 let blips = [];             // { id, cls, bearing, dist, clipped, lastSeen, lastHit }
@@ -153,6 +155,8 @@ resize();
 
 async function init() {
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
+  $('version').textContent = 'Version ' + APP_VERSION;
+  checkForUpdate();
   const standalone = matchMedia('(display-mode: fullscreen), (display-mode: standalone)').matches
                      || navigator.standalone;
   if (/iPhone|iPad|iPod/.test(navigator.userAgent) && !standalone) $('iosTip').hidden = false;
@@ -165,6 +169,26 @@ async function init() {
     statusEl.textContent = 'Fehler beim Laden: ' + e.message;
   }
 }
+
+/* ---------------- Automatische Updates ---------------- */
+
+// Neue Version online? Dann neu laden. Das Icon auf dem Home-Bildschirm bleibt gleich,
+// es muss also nie neu hinzugefügt werden.
+async function checkForUpdate() {
+  try {
+    const res = await fetch('version.json', { cache: 'no-store' });
+    const { version } = await res.json();
+    if (!version || version === APP_VERSION) return;
+    // Nur einmal pro Version neu laden, falls der Browser noch eine alte Kopie liefert
+    if (sessionStorage.getItem('reloaded-for') === version) return;
+    sessionStorage.setItem('reloaded-for', version);
+    location.reload();
+  } catch {}  // offline: einfach mit der vorhandenen Version weiterlaufen
+}
+// Als App bleibt die Seite oft im Hintergrund offen; beim Zurückkehren nachsehen
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') checkForUpdate();
+});
 
 /* ---------------- Installation als App ---------------- */
 
