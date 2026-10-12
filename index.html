@@ -32,6 +32,10 @@
                      border-radius:8px; font-size:20px; width:44px; height:44px; cursor:pointer; }
   #controls button.off { color:#060; border-color:#060; }
   video.mirror { transform:scaleX(-1); }
+  #laserHud { display:flex; flex-direction:column; gap:6px; color:#f55; max-width:60vw; }
+  #laserHud button { background:rgba(0,0,0,.6); color:#f55; border:1px solid #f55; border-radius:8px;
+                     padding:6px 10px; font-size:14px; cursor:pointer; }
+  #laserHud small { color:#faa; }
   #legend { position:fixed; z-index:2; bottom:calc(12px + var(--sb)); left:calc(12px + var(--sl));
             display:flex; flex-direction:column; gap:4px; }
   #legend button { display:flex; align-items:center; gap:6px; background:rgba(0,0,0,.6);
@@ -53,9 +57,15 @@
 <div id="info">
   <div id="status" class="hud">Lade KI-Modell…</div>
   <div id="heading" class="hud" hidden></div>
+  <div id="laserHud" class="hud" hidden>
+    <span id="laserText"></span>
+    <button id="bleBtn">🔗 Laser verbinden</button>
+    <small id="bleHint" hidden></small>
+  </div>
 </div>
 <div id="controls" hidden>
   <button id="installBtn" title="Als App installieren" hidden>📲</button>
+  <button id="laserBtn" title="Laser-Modus an/aus" class="off">🎯</button>
   <button id="camBtn" title="Kamera: automatisch wechseln / hinten / vorne" hidden>🔄</button>
   <button id="soundBtn" title="Ton an/aus">🔊</button>
   <button id="vibBtn" title="Vibration an/aus">📳</button>
@@ -108,7 +118,7 @@ const RADAR_SIZE = 0.22;    // Radius des Radars relativ zur kürzeren Bildschir
 const ALERT_COOLDOWN = 1000;// ms zwischen zwei Signalen für neue Objekte
 const RANGES = [10, 20, 50];// Radar-Reichweiten in Metern (Tippen aufs Radar wechselt)
 const TAU = Math.PI * 2;
-const APP_VERSION = '1.5';  // bei jedem Update zusammen mit version.json erhöhen
+const APP_VERSION = '1.6';  // bei jedem Update zusammen mit version.json erhöhen
 
 let model = null;
 let blips = [];             // { id, cls, bearing, dist, clipped, lastSeen, lastHit }
@@ -138,6 +148,7 @@ const isEnabled = cls => settings.enabled.includes(cls);
 let heading = 0;
 let hasCompass = false;
 let hx = 0, hy = 1;         // geglätteter Richtungsvektor
+let devicePitch = null;     // Neigung nach vorn/hinten in Grad (beta)
 
 let audio = null;
 let lastAlert = 0;
@@ -229,6 +240,7 @@ function cameraHeading(alpha, beta, gamma) {
 }
 
 function onOrientation(e) {
+  if (e.beta != null) devicePitch = e.beta;              // 90 = Handy steht senkrecht
   let h;
   if (typeof e.webkitCompassHeading === 'number') {
     h = e.webkitCompassHeading * Math.PI / 180;           // iOS
@@ -392,9 +404,177 @@ $('camBtn').onclick = () => {
 
 // Im Automatik-Modus regelmäßig zwischen hinten und vorne wechseln
 function maybeSwitchCamera(now) {
-  if (!twoCams || switching || settings.camMode !== 'auto' || now - cameraSince < CAM_DWELL) return;
+  if (!twoCams || switching || laser.on || settings.camMode !== 'auto' || now - cameraSince < CAM_DWELL) return;
   openCamera(facing === 'user' ? 'environment' : 'user')
     .catch(() => { twoCams = false; $('camBtn').hidden = true; });
+}
+
+/* ---------------- Laser-Modus ---------------- */
+
+// Der Laser zielt NIE auf Personen, sondern auf den Boden kurz vor ihre Füße.
+// Er wird nur eingeschaltet, wenn alle Sicherheitsprüfungen bestanden sind.
+const NUS_SERVICE = '6e400001-b5a3-f393-e0a9-e50e24dcca9e';  // Nordic UART Service
+const NUS_RX      = '6e400002-b5a3-f393-e0a9-e50e24dcca9e';
+const LASER_NAME = 'Radar-Laser';
+const MIN_DOWN_DEG = 3;     // Laser muss mindestens so weit unter die Waagerechte zeigen
+const MAX_PAN_DEG = 60;     // Schwenkbereich der Halterung
+const PERSON_MARGIN = 0.1;  // Sicherheitsabstand um jede Person (Anteil der Rahmengröße)
+
+const laser = {
+  on: false,          // Laser-Modus eingeschaltet
+  active: false,      // Laser darf gerade leuchten
+  reason: '',         // warum er aus ist
+  lockId: null,       // angetippte Person, sonst die nächste
+  targetId: null,
+  tx: null, ty: null, // geglätteter Zielpunkt in Videokoordinaten
+  pan: 0, tilt: 0,    // Winkel in Grad (rechts / unten positiv)
+  char: null,         // Bluetooth-Verbindung
+  busy: false, lastMsg: '', lastSend: 0
+};
+
+function pickTarget(now) {
+  if (now - detectionsTime > 300 || facing !== 'environment' || switching) return null;
+  const people = detections.filter(d => d.cls === 'person');
+  return people.find(d => d.id === laser.lockId)
+      || people.reduce((a, b) => (!a || b.dist < a.dist ? b : a), null);
+}
+
+function updateLaser(now) {
+  laser.active = false;
+  laser.targetId = null;
+  if (!laser.on) return;
+
+  const vw = video.videoWidth, vh = video.videoHeight, f = focalLength();
+  const t = pickTarget(now);
+  let reason = '';
+
+  if ((screen.orientation?.angle ?? window.orientation ?? 0) % 180 !== 0) {
+    reason = 'Handy hochkant halten';
+  } else if (!t) {
+    reason = 'keine Person im Blick';
+    laser.tx = laser.ty = null;
+  } else {
+    laser.targetId = t.id;
+    const [x, y, w, h] = t.bbox;
+    if (y + h >= vh * 0.97) {
+      reason = 'Füße nicht im Bild';
+    } else {
+      // Zielpunkt: Boden kurz vor den Füßen, im Bild etwas unterhalb des Rahmens
+      const gx = x + w / 2;
+      const gy = Math.min(vh * 0.98, y + h + Math.max(12, h * 0.15));  // muss außerhalb von PERSON_MARGIN liegen
+      if (laser.tx == null) { laser.tx = gx; laser.ty = gy; }
+      laser.tx += (gx - laser.tx) * 0.35;   // glätten, damit der Punkt nicht zittert
+      laser.ty += (gy - laser.ty) * 0.35;
+
+      laser.pan = Math.atan((laser.tx - vw / 2) / f) * 180 / Math.PI;
+      laser.tilt = Math.atan((laser.ty - vh / 2) / f) * 180 / Math.PI;
+      // Neigung des Handys: bei senkrechtem Handy (beta 90°) schaut die Kamera waagerecht
+      const down = (devicePitch != null ? 90 - devicePitch : 0) + laser.tilt;
+
+      // Zielpunkt darf in keiner Person liegen (auch nicht in anderen)
+      const hitsPerson = detections.some(d => {
+        if (d.cls !== 'person') return false;
+        const [px, py, pw, ph] = d.bbox, m = PERSON_MARGIN;
+        return laser.tx > px - pw * m && laser.tx < px + pw * (1 + m) &&
+               laser.ty > py - ph * m && laser.ty < py + ph * (1 + m);
+      });
+
+      if (hitsPerson) reason = 'Ziel zu nah an einer Person';
+      else if (down < MIN_DOWN_DEG) reason = 'Ziel zu hoch – Handy waagerecht halten';
+      else if (Math.abs(laser.pan) > MAX_PAN_DEG) reason = 'außer Reichweite';
+    }
+  }
+  laser.reason = reason;
+  laser.active = !reason;
+  sendLaser(now);
+}
+
+// Sendet z. B. "P12.3 T8.0 L1" an den ESP32, regelmäßig, damit dessen Watchdog den Laser anlässt
+async function sendLaser(now) {
+  if (!laser.char || laser.busy) return;
+  const msg = laser.on && laser.active
+    ? `P${laser.pan.toFixed(1)} T${laser.tilt.toFixed(1)} L1\n`
+    : 'L0\n';
+  if (now - laser.lastSend < 50 || (msg === laser.lastMsg && now - laser.lastSend < 200)) return;
+  laser.busy = true;
+  laser.lastMsg = msg;
+  laser.lastSend = now;
+  try {
+    const data = new TextEncoder().encode(msg);
+    await (laser.char.writeValueWithoutResponse
+      ? laser.char.writeValueWithoutResponse(data)
+      : laser.char.writeValue(data));
+  } catch {}
+  laser.busy = false;
+}
+
+async function connectLaser() {
+  if (!navigator.bluetooth) {
+    $('bleHint').hidden = false;
+    $('bleHint').textContent = /iPhone|iPad|iPod/.test(navigator.userAgent)
+      ? 'Safari kann kein Bluetooth. Öffne die App im Browser „Bluefy“ (App Store).'
+      : 'Dieser Browser kann kein Bluetooth. Nutze Chrome.';
+    return;
+  }
+  try {
+    const device = await navigator.bluetooth.requestDevice({
+      filters: [{ name: LASER_NAME }], optionalServices: [NUS_SERVICE]
+    });
+    device.addEventListener('gattserverdisconnected', () => { laser.char = null; updateLaserUi(); });
+    const server = await device.gatt.connect();
+    const service = await server.getPrimaryService(NUS_SERVICE);
+    laser.char = await service.getCharacteristic(NUS_RX);
+  } catch (e) {
+    $('bleHint').hidden = false;
+    $('bleHint').textContent = 'Verbindung fehlgeschlagen: ' + e.message;
+  }
+  updateLaserUi();
+}
+
+function updateLaserUi() {
+  $('laserBtn').classList.toggle('off', !laser.on);
+  $('laserHud').hidden = !laser.on;
+  $('bleBtn').textContent = laser.char ? '✅ Laser verbunden' : '🔗 Laser verbinden';
+}
+
+$('laserBtn').onclick = () => {
+  laser.on = !laser.on;
+  laser.lockId = null;
+  laser.tx = laser.ty = null;
+  // Der Laser sitzt neben der Rückkamera
+  if (laser.on && facing === 'user' && !switching) openCamera('environment').catch(() => {});
+  if (!laser.on) sendLaser(performance.now() + 1e6);
+  updateLaserUi();
+};
+$('bleBtn').onclick = connectLaser;
+
+function drawLaser(now) {
+  if (!laser.on) return;
+  $('laserText').textContent = laser.active
+    ? `🔴 Laser AN · Person #${laser.targetId}` + (laser.char ? '' : ' (nur Anzeige)')
+    : `⚪ Laser aus: ${laser.reason}`;
+  if (laser.tx == null || !video.videoWidth || facing !== 'environment') return;
+
+  const { scale, ox, oy } = videoToScreen();
+  const x = ox + laser.tx * scale, y = oy + laser.ty * scale;
+  if (laser.active) {
+    ctx.fillStyle = '#ff2020';
+    ctx.shadowColor = '#ff0000';
+    ctx.shadowBlur = 18;
+    ctx.beginPath();
+    ctx.arc(x, y, 7, 0, TAU);
+    ctx.fill();
+    ctx.shadowBlur = 0;
+  }
+  ctx.strokeStyle = laser.active ? 'rgba(255, 60, 60, 0.9)' : 'rgba(200, 200, 200, 0.7)';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.arc(x, y, 16, 0, TAU);
+  ctx.moveTo(x - 24, y); ctx.lineTo(x - 10, y);
+  ctx.moveTo(x + 10, y); ctx.lineTo(x + 24, y);
+  ctx.moveTo(x, y - 24); ctx.lineTo(x, y - 10);
+  ctx.moveTo(x, y + 10); ctx.lineTo(x, y + 24);
+  ctx.stroke();
 }
 
 /* ---------------- Start ---------------- */
@@ -427,7 +607,17 @@ startBtn.onclick = () => start().catch(e => statusEl.textContent = 'Kamera-Fehle
 
 // Tippen aufs Radar wechselt die Reichweite
 canvas.addEventListener('click', e => {
-  if (Math.hypot(e.clientX - radar.x, e.clientY - radar.y) > radar.R) return;
+  if (Math.hypot(e.clientX - radar.x, e.clientY - radar.y) > radar.R) {
+    // Im Laser-Modus: Person antippen = Ziel festlegen, daneben tippen = nächste Person
+    if (laser.on && video.videoWidth && facing === 'environment') {
+      const { scale, ox, oy } = videoToScreen();
+      const vx = (e.clientX - ox) / scale, vy = (e.clientY - oy) / scale;
+      const hit = detections.find(d => d.cls === 'person' &&
+        vx >= d.bbox[0] && vx <= d.bbox[0] + d.bbox[2] && vy >= d.bbox[1] && vy <= d.bbox[1] + d.bbox[3]);
+      laser.lockId = hit ? hit.id : null;
+    }
+    return;
+  }
   settings.range = (settings.range + 1) % RANGES.length;
   save();
 });
@@ -558,7 +748,7 @@ function drawBoxes(now) {
     ctx.stroke();
 
     // Beschriftung: Art, Nummer, Entfernung, Sicherheit
-    const label = `${CLASSES[d.cls].name} #${d.id} · ${d.clipped ? '< ' : '≈ '}${fmtDist(d.dist)} · ${Math.round(d.score * 100)}%`;
+    const label = `${laser.on && d.id === laser.targetId ? '🎯 ' : ''}${CLASSES[d.cls].name} #${d.id} · ${d.clipped ? '< ' : '≈ '}${fmtDist(d.dist)} · ${Math.round(d.score * 100)}%`;
     const tw = ctx.measureText(label).width + 10;
     const ly = sy > 24 ? sy - 24 : sy;
     ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
@@ -674,7 +864,9 @@ function render() {
   sweep = (sweep + SWEEP_SPEED * dt) % TAU;
 
   ctx.clearRect(0, 0, canvas.width, canvas.height);
+  updateLaser(now);
   drawBoxes(now);
+  drawLaser(now);
 
   // Radar in der unteren rechten Ecke (mit Abstand zu Notch/Home-Leiste)
   const safe = getComputedStyle($('safe'));
