@@ -118,7 +118,7 @@ const RADAR_SIZE = 0.22;    // Radius des Radars relativ zur kürzeren Bildschir
 const ALERT_COOLDOWN = 1000;// ms zwischen zwei Signalen für neue Objekte
 const RANGES = [10, 20, 50];// Radar-Reichweiten in Metern (Tippen aufs Radar wechselt)
 const TAU = Math.PI * 2;
-const APP_VERSION = '1.7';  // bei jedem Update zusammen mit version.json erhöhen
+const APP_VERSION = '1.8';  // bei jedem Update zusammen mit version.json erhöhen
 
 let model = null;
 let blips = [];             // { id, cls, bearing, dist, clipped, lastSeen, lastHit }
@@ -439,6 +439,20 @@ function pickTarget(now) {
       || people.reduce((a, b) => (!a || b.dist < a.dist ? b : a), null);
 }
 
+// Reiner Bildschirm-Effekt ohne verbundenen Laser: Der AR-Strahl darf auf die
+// Körpermitte zielen, weil er nur gezeichnet wird. Sobald ein echter Laser verbunden
+// ist, wird ausschließlich der Boden-Zielpunkt aus updateLaser() verwendet.
+function updateArTarget(t) {
+  laser.arActive = false;
+  if (laser.char || !t) { laser.arX = laser.arY = null; return; }
+  const [x, y, w, h] = t.bbox;
+  const gx = x + w / 2, gy = y + h * 0.4;   // Brusthöhe
+  if (laser.arX == null) { laser.arX = gx; laser.arY = gy; }
+  laser.arX += (gx - laser.arX) * 0.35;
+  laser.arY += (gy - laser.arY) * 0.35;
+  laser.arActive = true;
+}
+
 function updateLaser(now) {
   laser.active = false;
   laser.targetId = null;
@@ -447,6 +461,7 @@ function updateLaser(now) {
   const vw = video.videoWidth, vh = video.videoHeight, f = focalLength();
   const t = pickTarget(now);
   let reason = '';
+  updateArTarget(t);
 
   if ((screen.orientation?.angle ?? window.orientation ?? 0) % 180 !== 0) {
     reason = 'Handy hochkant halten';
@@ -577,7 +592,7 @@ function updateHum(level) {
   hum.gain.setTargetAtTime(settings.sound ? level * 0.04 : 0, audio.currentTime, 0.05);
 }
 
-function drawArLaser(x, y, a) {
+function drawArLaser(x, y, a, onFloor) {
   const flick = 0.8 + Math.random() * 0.2;      // leichtes Flackern wie bei einem echten Laser
   const sx = canvas.width / 2, sy = canvas.height + 10;  // Strahl kommt von unten (vom Handy)
   ctx.save();
@@ -607,7 +622,7 @@ function drawArLaser(x, y, a) {
     ctx.fillRect(sx + (x - sx) * t + (Math.random() - 0.5) * 6, sy + (y - sy) * t + (Math.random() - 0.5) * 6, 2, 2);
   }
 
-  // Laserpunkt auf dem Boden: flach (perspektivisch), näher = größer
+  // Laserpunkt: auf dem Boden flach (perspektivisch), auf der Person rund; näher = größer
   const r = Math.max(10, Math.min(30, 60 / (laser.dist || 3)));
   const jx = x + (Math.random() - 0.5) * 1.5, jy = y + (Math.random() - 0.5) * 1.5;
   const dot = ctx.createRadialGradient(jx, jy, 0, jx, jy, r * 2);
@@ -617,13 +632,17 @@ function drawArLaser(x, y, a) {
   dot.addColorStop(1,    'rgba(255, 0, 0, 0)');
   ctx.fillStyle = dot;
   ctx.beginPath();
-  ctx.ellipse(jx, jy, r * 2, r * 1.1, 0, 0, TAU);
+  ctx.ellipse(jx, jy, r * 2, onFloor ? r * 1.1 : r * 2, 0, 0, TAU);
   ctx.fill();
   ctx.restore();
 }
 
 function drawLaser(now) {
-  const show = laser.on && laser.active && laser.tx != null && facing === 'environment';
+  // Ohne echten Laser: AR-Ziel auf der Person, mit echtem Laser: Boden-Zielpunkt
+  const ar = !laser.char;
+  const tx = ar ? laser.arX : laser.tx, ty = ar ? laser.arY : laser.ty;
+  const on = ar ? laser.arActive : laser.active;
+  const show = laser.on && on && tx != null && facing === 'environment';
   laserGlow += ((show ? 1 : 0) - laserGlow) * 0.3;
   updateHum(laser.on ? laserGlow : 0);
 
@@ -632,15 +651,15 @@ function drawLaser(now) {
   wasActive = show;
 
   if (!laser.on) return;
-  $('laserText').textContent = laser.active
-    ? (laser.char ? `🔴 Laser AN · Person #${laser.targetId}` : `🔴 AR-Laser · Person #${laser.targetId}`)
-    : `⚪ Laser aus: ${laser.reason}`;
-  if (laser.tx == null || !video.videoWidth || facing !== 'environment') return;
+  $('laserText').textContent = on
+    ? (ar ? `🔴 AR-Laser · Person #${laser.targetId}` : `🔴 Laser AN · Person #${laser.targetId}`)
+    : `⚪ Laser aus: ${ar ? 'keine Person im Blick' : laser.reason}`;
+  if (tx == null || !video.videoWidth || facing !== 'environment') return;
 
   const { scale, ox, oy } = videoToScreen();
-  const x = ox + laser.tx * scale, y = oy + laser.ty * scale;
+  const x = ox + tx * scale, y = oy + ty * scale;
   if (laserGlow > 0.02) {
-    drawArLaser(x, y, laserGlow);
+    drawArLaser(x, y, laserGlow, !ar);
     return;
   }
 

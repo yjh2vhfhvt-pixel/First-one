@@ -13,3 +13,5 @@ Every change that is pushed must bump the version, so installed apps reload them
 `laser/` holds the ESP32 sketch and the German build guide. The laser must only ever aim at the
 floor in front of a person's feet, never at people; keep all safety checks in `updateLaser()`
 (app) and `parseCommand()`/watchdog (ESP32) when changing this code.
+Only the on-screen AR effect (`updateArTarget()`, used while no laser is connected) may aim at
+the person's body, because nothing physical is emitted.
