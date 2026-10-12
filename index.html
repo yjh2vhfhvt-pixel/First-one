@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+<title>Mensch-Radar</title>
+<style>
+  html, body { margin:0; height:100%; background:#000; overflow:hidden; font-family:sans-serif; }
+  video, canvas { position:fixed; top:0; left:0; width:100%; height:100%; object-fit:cover; }
+  #status { position:fixed; top:12px; left:12px; color:#0f0; background:rgba(0,0,0,.6);
+            padding:6px 12px; border-radius:8px; z-index:2; }
+  #start { position:fixed; inset:0; z-index:3; background:rgba(0,0,0,.85); color:#0f0;
+           font-size:22px; border:none; cursor:pointer; }
+</style>
+</head>
+<body>
+<video id="video" autoplay playsinline muted></video>
+<canvas id="overlay"></canvas>
+<div id="status">Lade KI-Modell…</div>
+<button id="start" hidden>Kamera starten</button>
+
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0/dist/tf.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd@2.2.3/dist/coco-ssd.min.js"></script>
+<script>
+const video = document.getElementById('video');
+const canvas = document.getElementById('overlay');
+const ctx = canvas.getContext('2d');
+const statusEl = document.getElementById('status');
+const startBtn = document.getElementById('start');
+
+const FOV = 1.0;          // Blickwinkel der Kamera in Radiant (ca. 57°)
+const SWEEP_SPEED = 1.5;  // Drehgeschwindigkeit des Radarstrahls in Radiant/Sekunde
+const FADE_TIME = 2.5;    // Sekunden, bis ein Punkt verblasst
+const MIN_SCORE = 0.5;    // Mindest-Konfidenz für eine Person
+const BOX_TIMEOUT = 500;  // ms, nach denen ein Rahmen ohne neue Erkennung verschwindet
+
+let model = null;
+let blips = [];           // { id, angle, dist, lastSeen, lastHit }
+let persons = [];         // aktuelle Erkennungen: { bbox, score, id }
+let personsTime = 0;
+let nextId = 1;
+let sweep = 0;
+let lastFrame = performance.now();
+
+function resize() {
+  canvas.width = innerWidth;
+  canvas.height = innerHeight;
+}
+addEventListener('resize', resize);
+resize();
+
+async function init() {
+  try {
+    model = await cocoSsd.load();
+    statusEl.textContent = 'Bereit';
+    startBtn.hidden = false;
+  } catch (e) {
+    statusEl.textContent = 'Fehler beim Laden: ' + e.message;
+  }
+}
+
+async function startCamera() {
+  const stream = await navigator.mediaDevices.getUserMedia({
+    video: { facingMode: 'environment' },
+    audio: false
+  });
+  video.srcObject = stream;
+  await video.play();
+  startBtn.hidden = true;
+  statusEl.textContent = 'Suche Menschen…';
+  detectLoop();
+  requestAnimationFrame(render);
+}
+startBtn.onclick = () => startCamera().catch(e => statusEl.textContent = 'Kamera-Fehler: ' + e.message);
+
+// Erkennung läuft unabhängig vom Zeichnen, etwa 10× pro Sekunde
+async function detectLoop() {
+  if (video.readyState >= 2) {
+    const preds = await model.detect(video);
+    const now = performance.now();
+    const used = new Set();   // jeder Punkt darf pro Durchlauf nur einer Person zugeordnet werden
+    const found = [];
+
+    for (const p of preds) {
+      if (p.class !== 'person' || p.score < MIN_SCORE) continue;
+      const [x, y, w, h] = p.bbox;
+      // Horizontale Mitte im Bild -> Winkel relativ zur Blickrichtung
+      const angle = ((x + w / 2) / video.videoWidth - 0.5) * FOV;
+      // Große Person im Bild = nah
+      const dist = Math.min(1, h / video.videoHeight);
+
+      // Nächstgelegenen bekannten Punkt aktualisieren, sonst neuen anlegen
+      let blip = null, best = Infinity;
+      for (const b of blips) {
+        if (used.has(b)) continue;
+        const da = Math.abs(b.angle - angle), dd = Math.abs(b.dist - dist);
+        if (da < 0.15 && dd < 0.2 && da + dd < best) { best = da + dd; blip = b; }
+      }
+      if (!blip) {
+        blip = { id: nextId++, lastHit: -1e9 };
+        blips.push(blip);
+      }
+      used.add(blip);
+      Object.assign(blip, { angle, dist, lastSeen: now });
+      found.push({ bbox: p.bbox, score: p.score, id: blip.id });
+    }
+
+    persons = found;
+    personsTime = now;
+
+    // Punkte entfernen, die länger nicht gesehen wurden
+    blips = blips.filter(b => now - b.lastSeen < 2000);
+    statusEl.textContent = `Personen erkannt: ${found.length}`;
+  }
+  setTimeout(detectLoop, 100);
+}
+
+// Rechnet Videokoordinaten in Bildschirmkoordinaten um (berücksichtigt object-fit: cover)
+function videoToScreen() {
+  const vw = video.videoWidth, vh = video.videoHeight;
+  const scale = Math.max(canvas.width / vw, canvas.height / vh);
+  return {
+    scale,
+    ox: (canvas.width - vw * scale) / 2,
+    oy: (canvas.height - vh * scale) / 2
+  };
+}
+
+function drawPersonBoxes(now) {
+  if (now - personsTime > BOX_TIMEOUT || !video.videoWidth) return;
+  const { scale, ox, oy } = videoToScreen();
+
+  ctx.lineWidth = 3;
+  ctx.font = 'bold 16px sans-serif';
+  ctx.textBaseline = 'top';
+
+  for (const p of persons) {
+    const [x, y, w, h] = p.bbox;
+    const sx = ox + x * scale, sy = oy + y * scale;
+    const sw = w * scale, sh = h * scale;
+
+    // Rahmen
+    ctx.strokeStyle = '#0f0';
+    ctx.shadowColor = '#0f0';
+    ctx.shadowBlur = 8;
+    ctx.strokeRect(sx, sy, sw, sh);
+    ctx.shadowBlur = 0;
+
+    // Ecken-Markierungen im Zielerfassungs-Stil
+    const c = Math.min(24, sw / 4, sh / 4);
+    ctx.lineWidth = 5;
+    ctx.beginPath();
+    ctx.moveTo(sx, sy + c); ctx.lineTo(sx, sy); ctx.lineTo(sx + c, sy);
+    ctx.moveTo(sx + sw - c, sy); ctx.lineTo(sx + sw, sy); ctx.lineTo(sx + sw, sy + c);
+    ctx.moveTo(sx, sy + sh - c); ctx.lineTo(sx, sy + sh); ctx.lineTo(sx + c, sy + sh);
+    ctx.moveTo(sx + sw - c, sy + sh); ctx.lineTo(sx + sw, sy + sh); ctx.lineTo(sx + sw, sy + sh - c);
+    ctx.stroke();
+    ctx.lineWidth = 3;
+
+    // Beschriftung
+    const label = `Person #${p.id}  ${Math.round(p.score * 100)}%`;
+    const tw = ctx.measureText(label).width + 10;
+    const ly = sy > 24 ? sy - 24 : sy;
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+    ctx.fillRect(sx, ly, tw, 22);
+    ctx.fillStyle = '#0f0';
+    ctx.fillText(label, sx + 5, ly + 3);
+  }
+}
+
+function render() {
+  const now = performance.now();
+  const dt = (now - lastFrame) / 1000;
+  lastFrame = now;
+  sweep = (sweep + SWEEP_SPEED * dt) % (Math.PI * 2);
+
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  drawPersonBoxes(now);
+
+  // Radar in der unteren rechten Ecke
+  const R = Math.min(canvas.width, canvas.height) * 0.3;
+  const rx = canvas.width - R - 20;
+  const ry = canvas.height - R - 20;
+
+  ctx.fillStyle = 'rgba(0, 25, 0, 0.6)';
+  ctx.beginPath();
+  ctx.arc(rx, ry, R, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.strokeStyle = 'rgba(0, 255, 0, 0.5)';
+  ctx.lineWidth = 1.5;
+  for (const f of [0.33, 0.66, 1]) {
+    ctx.beginPath();
+    ctx.arc(rx, ry, R * f, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+
+  // Sichtfeld der Kamera als Kegel
+  ctx.fillStyle = 'rgba(0, 255, 0, 0.08)';
+  ctx.beginPath();
+  ctx.moveTo(rx, ry);
+  ctx.arc(rx, ry, R, -Math.PI / 2 - FOV / 2, -Math.PI / 2 + FOV / 2);
+  ctx.closePath();
+  ctx.fill();
+
+  // Radarstrahl (0 = oben = Blickrichtung der Kamera)
+  ctx.strokeStyle = 'rgba(0, 255, 0, 0.9)';
+  ctx.beginPath();
+  ctx.moveTo(rx, ry);
+  ctx.lineTo(rx + Math.sin(sweep) * R, ry - Math.cos(sweep) * R);
+  ctx.stroke();
+
+  // Personen als Punkte
+  ctx.font = '11px sans-serif';
+  ctx.textBaseline = 'middle';
+  for (const b of blips) {
+    // Trifft der Strahl den Winkel der Person?
+    let d = ((sweep - b.angle) % (2 * Math.PI) + 2 * Math.PI) % (2 * Math.PI);
+    if (Math.min(d, 2 * Math.PI - d) < 0.08) b.lastHit = now;
+
+    const age = (now - b.lastHit) / 1000;
+    if (age < FADE_TIME) {
+      const r = R * (0.95 - 0.8 * b.dist);
+      const x = rx + Math.sin(b.angle) * r;
+      const y = ry - Math.cos(b.angle) * r;
+      const alpha = 1 - age / FADE_TIME;
+      ctx.fillStyle = `rgba(0, 255, 0, ${alpha})`;
+      ctx.beginPath();
+      ctx.arc(x, y, 6, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillText('#' + b.id, x + 9, y);
+    }
+  }
+
+  requestAnimationFrame(render);
+}
+
+init();
+</script>
+</body>
+</html>
