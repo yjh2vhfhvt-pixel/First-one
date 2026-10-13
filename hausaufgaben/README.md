@@ -38,6 +38,22 @@ Die Ordner importierst du dann in GoodNotes in den gleichnamigen Ordner.
    `iCloud Drive/Hausaufgaben/Ausgabe/<Fach>/`.
 7. In GoodNotes den Fach-Ordner öffnen, **+ → Importieren** und die neuen PDFs auswählen.
 
+## Automatisch jeden Tag (Kurzbefehle)
+
+1. In a-Shell einmalig: `pickFolder` → Ordner `Hausaufgaben` wählen, dann
+   `bookmark hausaufgaben`. Danach kommst du immer mit `jump hausaufgaben` in den Ordner.
+2. Kurzbefehle-App → **Automation** → **+** → **Tageszeit** (z. B. 15:30, täglich)
+   → **Sofort ausführen**.
+3. Aktion **a-Shell → Execute Command** hinzufügen, Befehle (je eine Zeile):
+   ```
+   jump hausaufgaben
+   export UNTIS_PASSWORT='DEIN-UNTIS-PASSWORT'
+   export LOGINEO_PASSWORT='DEIN-LOGINEO-PASSWORT'
+   python3 hausaufgaben.py
+   ```
+   Achtung: Die Passwörter stehen dann im Klartext im Kurzbefehl (nur auf deinem iPad).
+4. Optional danach die Aktion **Mitteilung anzeigen** („Hausaufgaben aktualisiert“).
+
 ## config.json ausfüllen
 
 1. `config.example.json` nach `config.json` kopieren und ausfüllen:
