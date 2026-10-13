@@ -1,7 +1,7 @@
 {
   "untis": {
-    "server": "SERVER.webuntis.com",
-    "schule": "SCHULNAME",
+    "server": "remigianum.webuntis.com",
+    "schule": "",
     "benutzer": "VornameNachname"
   },
   "logineo": {

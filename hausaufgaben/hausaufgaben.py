@@ -218,6 +218,24 @@ class Untis:
         self.http = Http()
         self.session = None
 
+    @staticmethod
+    def schule_suchen(server):
+        """Ermittelt den Untis-Schulnamen (loginName) ueber die oeffentliche Schulsuche."""
+        suche = server.split(".")[0]
+        antwort = Http().json("https://mobile.webuntis.com/ms/schoolquery2", json_body={
+            "id": "1", "jsonrpc": "2.0", "method": "searchSchool",
+            "params": [{"search": suche}]})
+        schulen = (antwort.get("result") or {}).get("schools", [])
+        passend = [s for s in schulen
+                   if server in (s.get("server", "") + " " + s.get("serverUrl", ""))]
+        treffer = passend or (schulen if len(schulen) == 1 else [])
+        if len(treffer) != 1:
+            namen = ", ".join("%s (%s)" % (s.get("displayName"), s.get("loginName"))
+                              for s in schulen) or "keine"
+            raise RuntimeError("Untis-Schule nicht eindeutig gefunden. Treffer: %s. "
+                               "Trag 'schule' in config.json selbst ein." % namen)
+        return treffer[0]["loginName"]
+
     def _rpc(self, methode, params=None):
         url = "%s/jsonrpc.do?school=%s" % (self.basis, urllib.parse.quote(self.schule))
         antwort = self.http.json(url, json_body={
@@ -400,6 +418,9 @@ def main(argv=None):
         ziel = os.path.join(HIER, ziel)
 
     u = konfig["untis"]
+    if not u.get("schule"):
+        u["schule"] = Untis.schule_suchen(u["server"])
+        print("Untis-Schule gefunden: %s" % u["schule"])
     untis = Untis(u["server"], u["schule"], u["benutzer"],
                   passwort("UNTIS_PASSWORT", "Untis-Passwort: "))
     untis.anmelden()

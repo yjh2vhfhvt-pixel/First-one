@@ -41,8 +41,8 @@ Die Ordner importierst du dann in GoodNotes in den gleichnamigen Ordner.
 ## config.json ausfüllen
 
 1. `config.example.json` nach `config.json` kopieren und ausfüllen:
-   - `untis.server` und `untis.schule`: steht in der Untis-App unter *Profil → Schule*
-     oder in der Adresszeile von WebUntis (`https://SERVER.webuntis.com/WebUntis/?school=SCHULNAME`).
+   - `untis.server`: der Teil aus der WebUntis-Adresse, z. B. `remigianum.webuntis.com`.
+   - `untis.schule`: darf leer bleiben, dann sucht das Skript den Schulnamen selbst.
    - `logineo.url`: die Adresse eurer Logineo-LMS-Seite (ohne `/my/` am Ende).
    - `faecher`: das Untis-Fachkürzel (z. B. `M`) → GoodNotes-Ordnername und ein Teil
      des Logineo-Kursnamens.

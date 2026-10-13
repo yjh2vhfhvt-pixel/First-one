@@ -57,6 +57,18 @@ class Tests(unittest.TestCase):
                 break
             self.assertTrue(pdf[int(e[:10]):].startswith(b"%d 0 obj" % i))
 
+    def test_schule_suchen(self):
+        from unittest import mock
+        antwort = {"result": {"schools": [
+            {"server": "andere.webuntis.com", "displayName": "A", "loginName": "a"},
+            {"server": "remigianum.webuntis.com", "displayName": "Remi", "loginName": "Gym Remigianum"},
+        ]}}
+        with mock.patch.object(h.Http, "json", return_value=antwort):
+            self.assertEqual(h.Untis.schule_suchen("remigianum.webuntis.com"), "Gym Remigianum")
+        with mock.patch.object(h.Http, "json", return_value={"result": {"schools": []}}):
+            with self.assertRaises(RuntimeError):
+                h.Untis.schule_suchen("remigianum.webuntis.com")
+
     def test_ablauf(self):
         import json, tempfile
         from unittest import mock
