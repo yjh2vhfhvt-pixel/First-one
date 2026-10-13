@@ -384,7 +384,35 @@ def lade_konfig(pfad):
     if not os.path.exists(pfad):
         return einrichten(pfad)
     with open(pfad, encoding="utf-8") as f:
-        return json.load(f)
+        konfig = json.load(f)
+    if fehlende_namen_abfragen(konfig):
+        speichere_konfig(pfad, konfig)
+    return konfig
+
+
+def frage(text):
+    antwort = ""
+    while not antwort:
+        antwort = input(text).strip()
+    return antwort
+
+
+def fehlende_namen_abfragen(konfig):
+    geaendert = False
+    if not konfig["untis"].get("benutzer"):
+        konfig["untis"]["benutzer"] = frage("Untis-Benutzername: ")
+        geaendert = True
+    l = konfig.get("logineo") or {}
+    if l.get("url") and not l.get("benutzer"):
+        l["benutzer"] = frage("Logineo-Benutzername: ")
+        geaendert = True
+    return geaendert
+
+
+def speichere_konfig(pfad, konfig):
+    with open(pfad, "w", encoding="utf-8") as f:
+        json.dump(konfig, f, indent=2, ensure_ascii=False)
+    print("Gespeichert in %s\n" % pfad)
 
 
 def einrichten(pfad):
@@ -395,17 +423,18 @@ def einrichten(pfad):
     with open(vorlage, encoding="utf-8") as f:
         konfig = json.load(f)
     print("Erste Einrichtung (Passwoerter werden NICHT gespeichert).")
-    konfig["untis"]["benutzer"] = input("Untis-Benutzername: ").strip()
-    if konfig.get("logineo", {}).get("url"):
-        konfig["logineo"]["benutzer"] = input("Logineo-Benutzername: ").strip()
-    with open(pfad, "w", encoding="utf-8") as f:
-        json.dump(konfig, f, indent=2, ensure_ascii=False)
-    print("Gespeichert in %s\n" % pfad)
+    konfig["untis"]["benutzer"] = ""
+    konfig.setdefault("logineo", {})["benutzer"] = ""
+    fehlende_namen_abfragen(konfig)
+    speichere_konfig(pfad, konfig)
     return konfig
 
 
-def passwort(env, frage):
-    return os.environ.get(env) or getpass.getpass(frage)
+def passwort(env, text):
+    if os.environ.get(env):
+        return os.environ[env]
+    print("(Beim Tippen ist nichts zu sehen. Keine Tastatur? Einmal auf den Bildschirm tippen.)")
+    return getpass.getpass(text)
 
 
 def fach_info(konfig, fach):

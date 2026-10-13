@@ -76,12 +76,19 @@ class Tests(unittest.TestCase):
         tmp = tempfile.mkdtemp()
         shutil.copy(os.path.join(os.path.dirname(h.__file__), "config.example.json"), tmp)
         pfad = os.path.join(tmp, "config.json")
-        with mock.patch("builtins.input", side_effect=["untis.user", "logineo.user"]), \
+        with mock.patch("builtins.input", side_effect=["untis.user", "", "logineo.user"]), \
              mock.patch("builtins.print"):
             k = h.lade_konfig(pfad)
         self.assertEqual(k["untis"]["benutzer"], "untis.user")
         with open(pfad) as f:
-            self.assertEqual(json.load(f)["logineo"]["benutzer"], "logineo.user")
+            k = json.load(f)
+        self.assertEqual(k["logineo"]["benutzer"], "logineo.user")
+        # fehlender Name in vorhandener config wird nachgefragt
+        k["logineo"]["benutzer"] = ""
+        with open(pfad, "w") as f:
+            json.dump(k, f)
+        with mock.patch("builtins.input", side_effect=["neu"]), mock.patch("builtins.print"):
+            self.assertEqual(h.lade_konfig(pfad)["logineo"]["benutzer"], "neu")
 
     def test_ablauf(self):
         import json, tempfile
