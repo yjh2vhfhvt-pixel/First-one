@@ -42,6 +42,7 @@ class Tests(unittest.TestCase):
                  {"id": 2, "shortname": "M-10b", "fullname": "Mathematik 10b"}]
         self.assertEqual(h.finde_kurs(kurse, "mathematik")["id"], 2)
         self.assertIsNone(h.finde_kurs(kurse, "Physik"))
+        self.assertEqual(h.finde_kurs(kurse, ["Physik", "Deutsch"])["id"], 1)
 
     def test_pdf(self):
         pdf = h.aufgaben_pdf("M: Hausaufgabe", ["Fällig: 15.10.2026"],

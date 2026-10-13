@@ -364,13 +364,15 @@ class Logineo:
         return self.http.anfrage(url + trenner + "token=" + urllib.parse.quote(self.token))
 
 
-def finde_kurs(kurse, suchbegriff):
-    if not suchbegriff:
-        return None
-    s = suchbegriff.lower()
-    for k in kurse:
-        if s in (k.get("shortname") or "").lower() or s in (k.get("fullname") or "").lower():
-            return k
+def finde_kurs(kurse, suchbegriffe):
+    """Erster Kurs, dessen Name einen der Suchbegriffe enthaelt (String oder Liste)."""
+    if isinstance(suchbegriffe, str):
+        suchbegriffe = [suchbegriffe]
+    for begriff in suchbegriffe or []:
+        s = begriff.lower()
+        for k in kurse:
+            if s in (k.get("shortname") or "").lower() or s in (k.get("fullname") or "").lower():
+                return k
     return None
 
 
@@ -442,6 +444,7 @@ def main(argv=None):
         kurse = logineo.kurse()
 
     kurs_cache = {}
+    kurse_gezeigt = False
     for hw in offen:
         ordner, kurs_name = fach_info(konfig, hw["fach"])
         praefix = "%s %s" % (hw["faellig"].isoformat(), kurztitel(hw["text"]))
@@ -455,6 +458,10 @@ def main(argv=None):
         kurs = finde_kurs(kurse, kurs_name) if logineo else None
         if logineo and kurs_name and not kurs:
             print("  ! Logineo-Kurs '%s' nicht gefunden." % kurs_name)
+            if not kurse_gezeigt:
+                print("    Deine Logineo-Kurse: " + "; ".join(
+                    k.get("fullname") or k.get("shortname", "?") for k in kurse))
+                kurse_gezeigt = True
         if kurs:
             if kurs["id"] not in kurs_cache:
                 kurs_cache[kurs["id"]] = (logineo.aufgaben(kurs["id"]), logineo.dateien(kurs["id"]))

@@ -45,7 +45,8 @@ Die Ordner importierst du dann in GoodNotes in den gleichnamigen Ordner.
    - `untis.schule`: darf leer bleiben, dann sucht das Skript den Schulnamen selbst.
    - `logineo.url`: die Adresse eurer Logineo-LMS-Seite (ohne `/my/` am Ende).
    - `faecher`: das Untis-Fachkürzel (z. B. `M`) → GoodNotes-Ordnername und ein Teil
-     des Logineo-Kursnamens.
+     des Logineo-Kursnamens (oder eine Liste mehrerer Suchbegriffe). Findet das Skript
+     einen Kurs nicht, listet es deine Logineo-Kurse auf.
    - `ausgabe_ordner`: am besten ein Ordner in iCloud Drive, dann siehst du die Dateien
      direkt in GoodNotes beim Importieren.
 2. **Passwörter kommen nicht in die Datei.** Das Skript fragt sie beim Start ab
