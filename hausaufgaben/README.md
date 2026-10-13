@@ -44,15 +44,19 @@ Die Ordner importierst du dann in GoodNotes in den gleichnamigen Ordner.
    `bookmark hausaufgaben`. Danach kommst du immer mit `jump hausaufgaben` in den Ordner.
 2. Kurzbefehle-App → **Automation** → **+** → **Tageszeit** (z. B. 15:30, täglich)
    → **Sofort ausführen**.
-3. Aktion **a-Shell → Execute Command** hinzufügen, Befehle (je eine Zeile):
+3. Passwörter einmalig in a-Shell speichern (landen in a-Shells privatem Ordner, nicht in
+   iCloud und nicht im Kurzbefehl):
    ```
    jump hausaufgaben
-   export UNTIS_PASSWORT='DEIN-UNTIS-PASSWORT'
-   export LOGINEO_PASSWORT='DEIN-LOGINEO-PASSWORT'
+   python3 hausaufgaben.py --passwoerter-speichern
+   ```
+   Nach einer Passwortänderung den Befehl einfach noch einmal ausführen.
+4. Aktion **a-Shell → Execute Command** hinzufügen, Befehle (je eine Zeile):
+   ```
+   jump hausaufgaben
    python3 hausaufgaben.py
    ```
-   Achtung: Die Passwörter stehen dann im Klartext im Kurzbefehl (nur auf deinem iPad).
-4. Optional danach die Aktion **Mitteilung anzeigen** („Hausaufgaben aktualisiert“).
+5. Optional danach die Aktion **Mitteilung anzeigen** („Hausaufgaben aktualisiert“).
 
 ## config.json ausfüllen
 

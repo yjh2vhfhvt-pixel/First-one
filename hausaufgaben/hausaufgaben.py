@@ -430,9 +430,38 @@ def einrichten(pfad):
     return konfig
 
 
+# Liegt im privaten Bereich der App (bei a-Shell: nicht in iCloud), damit
+# der Kurzbefehl ohne Passwoerter im Klartext auskommt.
+PASSWORT_DATEI = os.path.expanduser("~/.hausaufgaben-passwoerter.json")
+
+
+def gespeicherte_passwoerter():
+    try:
+        with open(PASSWORT_DATEI, encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return {}
+
+
+def passwoerter_speichern():
+    daten = {"UNTIS_PASSWORT": eingabe_verdeckt("Untis-Passwort: "),
+             "LOGINEO_PASSWORT": eingabe_verdeckt("Logineo-Passwort: ")}
+    fd = os.open(PASSWORT_DATEI, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        json.dump(daten, f)
+    print("Passwoerter gespeichert in %s (nur auf diesem Geraet)." % PASSWORT_DATEI)
+
+
 def passwort(env, text):
     if os.environ.get(env):
         return os.environ[env]
+    gespeichert = gespeicherte_passwoerter().get(env)
+    if gespeichert:
+        return gespeichert
+    return eingabe_verdeckt(text)
+
+
+def eingabe_verdeckt(text):
     if auf_ipad():
         # getpass blendet in a-Shell die Tastatur aus; deshalb normal einlesen
         # und die Zeile danach sofort wieder vom Bildschirm loeschen.
@@ -525,7 +554,12 @@ def main(argv=None):
     ap.add_argument("--ueberschreiben", action="store_true",
                     help="vorhandene Dateien neu schreiben")
     ap.add_argument("--ohne-logineo", action="store_true")
+    ap.add_argument("--passwoerter-speichern", action="store_true",
+                    help="Passwoerter einmalig auf diesem Geraet speichern (fuer Kurzbefehle)")
     args = ap.parse_args(argv)
+    if args.passwoerter_speichern:
+        passwoerter_speichern()
+        return
 
     konfig = lade_konfig(args.konfig)
     heute = dt.date.today()

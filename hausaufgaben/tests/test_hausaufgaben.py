@@ -90,6 +90,18 @@ class Tests(unittest.TestCase):
         with mock.patch("builtins.input", side_effect=["neu"]), mock.patch("builtins.print"):
             self.assertEqual(h.lade_konfig(pfad)["logineo"]["benutzer"], "neu")
 
+    def test_passwort_datei(self):
+        import tempfile
+        from unittest import mock
+        datei = os.path.join(tempfile.mkdtemp(), "pw.json")
+        with mock.patch.object(h, "PASSWORT_DATEI", datei), \
+             mock.patch.object(h, "eingabe_verdeckt", side_effect=["u-pw", "l-pw"]), \
+             mock.patch("builtins.print"), mock.patch.dict(os.environ, {}, clear=True):
+            h.passwoerter_speichern()
+            self.assertEqual(oct(os.stat(datei).st_mode & 0o777), "0o600")
+            self.assertEqual(h.passwort("UNTIS_PASSWORT", "x"), "u-pw")
+            self.assertEqual(h.passwort("LOGINEO_PASSWORT", "x"), "l-pw")
+
     def test_fach_info(self):
         k = {"faecher": {"CH": {"ordner": "Chemie", "logineo_kurs": ["Chemie"]}}}
         self.assertEqual(h.fach_info(k, "CH G2"), ("Chemie", ["Chemie"]))
