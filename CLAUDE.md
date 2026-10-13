@@ -9,6 +9,7 @@ and writes per-subject PDFs to import into GoodNotes. Docs (German) in `hausaufg
   `config.json` is git-ignored; only `config.example.json` with placeholders is committed.
 - Tests: `cd hausaufgaben && python3 -m unittest discover -s tests`.
 
-The old Mensch-Radar PWA (`index.html`, `laser/`, …) still lives on branch
-`claude/radar-app-person-detection-6xh9fq`, which GitHub Pages serves. Its files are still in
-this branch's root too, pending removal.
+The user runs it on an iPad with a-Shell from a folder in iCloud Drive (see README).
+
+The old Mensch-Radar PWA was removed from this branch; it still lives on branch
+`claude/radar-app-person-detection-6xh9fq`, which GitHub Pages serves.

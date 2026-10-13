@@ -14,10 +14,33 @@ Ausgabe/
 
 Die Ordner importierst du dann in GoodNotes in den gleichnamigen Ordner.
 
-## Einrichtung
+## Einrichtung auf dem iPad (a-Shell)
 
-1. Python 3 installieren. Auf dem iPad geht das mit **a-Shell** (kostenlos) oder **Pythonista**.
-2. `config.example.json` nach `config.json` kopieren und ausfüllen:
+1. **a-Shell** aus dem App Store installieren (kostenlos, Python ist schon dabei).
+2. In der Dateien-App in **iCloud Drive** einen Ordner `Hausaufgaben` anlegen.
+3. Auf GitHub den Branch `claude/homework-untis-logineo-614iyx` öffnen, *Code → Download ZIP*,
+   die ZIP in der Dateien-App öffnen und aus dem Ordner `hausaufgaben` die Dateien
+   `hausaufgaben.py` und `config.example.json` in `iCloud Drive/Hausaufgaben` kopieren.
+4. In der Dateien-App `config.example.json` duplizieren, in `config.json` umbenennen
+   und ausfüllen (siehe unten). Zum Bearbeiten z. B. in a-Shell `vim config.json`, oder
+   du schickst die Werte an Claude und lässt dir die fertige Datei geben.
+5. a-Shell öffnen und eingeben:
+   ```
+   pickFolder
+   ```
+   Den Ordner `Hausaufgaben` in iCloud Drive auswählen. Das musst du nur einmal machen.
+   Danach kommst du mit `cd ~bookmark/Hausaufgaben` wieder hin (oder direkt `pickFolder`).
+6. Starten:
+   ```
+   python3 hausaufgaben.py
+   ```
+   Untis- und Logineo-Passwort eintippen. Die PDFs landen in
+   `iCloud Drive/Hausaufgaben/Ausgabe/<Fach>/`.
+7. In GoodNotes den Fach-Ordner öffnen, **+ → Importieren** und die neuen PDFs auswählen.
+
+## config.json ausfüllen
+
+1. `config.example.json` nach `config.json` kopieren und ausfüllen:
    - `untis.server` und `untis.schule`: steht in der Untis-App unter *Profil → Schule*
      oder in der Adresszeile von WebUntis (`https://SERVER.webuntis.com/WebUntis/?school=SCHULNAME`).
    - `logineo.url`: die Adresse eurer Logineo-LMS-Seite (ohne `/my/` am Ende).
@@ -25,7 +48,7 @@ Die Ordner importierst du dann in GoodNotes in den gleichnamigen Ordner.
      des Logineo-Kursnamens.
    - `ausgabe_ordner`: am besten ein Ordner in iCloud Drive, dann siehst du die Dateien
      direkt in GoodNotes beim Importieren.
-3. **Passwörter kommen nicht in die Datei.** Das Skript fragt sie beim Start ab
+2. **Passwörter kommen nicht in die Datei.** Das Skript fragt sie beim Start ab
    (oder liest sie aus `UNTIS_PASSWORT` / `LOGINEO_PASSWORT`). `config.json` wird nicht
    mit ins Git hochgeladen.
 
