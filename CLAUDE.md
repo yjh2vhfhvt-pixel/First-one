@@ -1,17 +1,14 @@
-# Mensch-Radar
+# Hausaufgaben-Sammler
 
-Single-page web app (`index.html`), served via GitHub Pages from branch
-`claude/radar-app-person-detection-6xh9fq`. Installed on the user's home screen as a PWA.
+The project is now the homework collector in `hausaufgaben/`: a stdlib-only Python script that
+reads homework from WebUntis, matching assignments/files from Logineo NRW (Moodle web services),
+and writes per-subject PDFs to import into GoodNotes. Docs (German) in `hausaufgaben/README.md`.
 
-## Releasing an update
-Every change that is pushed must bump the version, so installed apps reload themselves:
-- `APP_VERSION` in `index.html`
-- `version.json`
-(both must hold the same value). The home-screen icon never needs to be re-added.
+- Keep it Python-stdlib-only so it runs on the iPad (a-Shell / Pythonista).
+- Never store passwords: they come from `UNTIS_PASSWORT` / `LOGINEO_PASSWORT` or a prompt.
+  `config.json` is git-ignored; only `config.example.json` with placeholders is committed.
+- Tests: `cd hausaufgaben && python3 -m unittest discover -s tests`.
 
-## Laser mode
-`laser/` holds the ESP32 sketch and the German build guide. The laser must only ever aim at the
-floor in front of a person's feet, never at people; keep all safety checks in `updateLaser()`
-(app) and `parseCommand()`/watchdog (ESP32) when changing this code.
-Only the on-screen AR effect (`updateArTarget()`, used while no laser is connected) may aim at
-the person's body, because nothing physical is emitted.
+The old Mensch-Radar PWA (`index.html`, `laser/`, …) still lives on branch
+`claude/radar-app-person-detection-6xh9fq`, which GitHub Pages serves. Its files are still in
+this branch's root too, pending removal.

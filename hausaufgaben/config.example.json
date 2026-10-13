@@ -1,0 +1,19 @@
+{
+  "untis": {
+    "server": "SERVER.webuntis.com",
+    "schule": "SCHULNAME",
+    "benutzer": "VornameNachname"
+  },
+  "logineo": {
+    "url": "https://SCHULNUMMER.logineonrw-lms.de",
+    "benutzer": "vorname.nachname"
+  },
+  "ausgabe_ordner": "Ausgabe",
+  "tage_voraus": 7,
+  "faecher": {
+    "M":  { "ordner": "Mathe",    "logineo_kurs": "Mathematik" },
+    "D":  { "ordner": "Deutsch",  "logineo_kurs": "Deutsch" },
+    "E":  { "ordner": "Englisch", "logineo_kurs": "Englisch" },
+    "BI": { "ordner": "Bio",      "logineo_kurs": "Biologie" }
+  }
+}
