@@ -448,7 +448,9 @@ def auf_ipad():
 
 
 def fach_info(konfig, fach):
-    eintrag = konfig.get("faecher", {}).get(fach, {})
+    """Untis-Fach -> (Ordner, Logineo-Suchbegriffe). 'CH G2' passt auch auf 'CH'."""
+    faecher = konfig.get("faecher", {})
+    eintrag = faecher.get(fach) or faecher.get(fach.split()[0] if fach.split() else fach, {})
     return eintrag.get("ordner") or fach, eintrag.get("logineo_kurs")
 
 

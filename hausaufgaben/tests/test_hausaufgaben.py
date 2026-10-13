@@ -90,6 +90,12 @@ class Tests(unittest.TestCase):
         with mock.patch("builtins.input", side_effect=["neu"]), mock.patch("builtins.print"):
             self.assertEqual(h.lade_konfig(pfad)["logineo"]["benutzer"], "neu")
 
+    def test_fach_info(self):
+        k = {"faecher": {"CH": {"ordner": "Chemie", "logineo_kurs": ["Chemie"]}}}
+        self.assertEqual(h.fach_info(k, "CH G2"), ("Chemie", ["Chemie"]))
+        self.assertEqual(h.fach_info(k, "CH"), ("Chemie", ["Chemie"]))
+        self.assertEqual(h.fach_info(k, "PH G1"), ("PH G1", None))
+
     def test_ablauf(self):
         import json, tempfile
         from unittest import mock
