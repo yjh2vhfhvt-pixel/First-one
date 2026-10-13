@@ -433,8 +433,18 @@ def einrichten(pfad):
 def passwort(env, text):
     if os.environ.get(env):
         return os.environ[env]
-    print("(Beim Tippen ist nichts zu sehen. Keine Tastatur? Einmal auf den Bildschirm tippen.)")
+    if auf_ipad():
+        # getpass blendet in a-Shell die Tastatur aus; deshalb normal einlesen
+        # und die Zeile danach sofort wieder vom Bildschirm loeschen.
+        wert = input(text)
+        print("\033[1A\033[2K%s********" % text)
+        return wert
     return getpass.getpass(text)
+
+
+def auf_ipad():
+    import platform
+    return platform.machine().startswith(("iPad", "iPhone"))
 
 
 def fach_info(konfig, fach):
