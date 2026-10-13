@@ -517,7 +517,8 @@ def main(argv=None):
 
         kurs = finde_kurs(kurse, kurs_name) if logineo else None
         if logineo and kurs_name and not kurs:
-            print("  ! Logineo-Kurs '%s' nicht gefunden." % kurs_name)
+            print("  ! Logineo-Kurs '%s' nicht gefunden." % (
+                kurs_name if isinstance(kurs_name, str) else "' / '".join(kurs_name)))
             if not kurse_gezeigt:
                 print("    Deine Logineo-Kurse: " + "; ".join(
                     k.get("fullname") or k.get("shortname", "?") for k in kurse))
