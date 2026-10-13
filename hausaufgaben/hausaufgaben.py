@@ -454,6 +454,61 @@ def fach_info(konfig, fach):
     return eintrag.get("ordner") or fach, eintrag.get("logineo_kurs")
 
 
+class Verlauf:
+    """Merkt sich, welche Dateien schon einmal geliefert wurden.
+
+    So kommen Dateien, die du nach dem Import in GoodNotes geloescht hast,
+    beim naechsten Lauf nicht wieder.
+    """
+
+    def __init__(self, ziel):
+        self.ziel = ziel
+        self.pfad = os.path.join(ziel, ".verlauf.json")
+        try:
+            with open(self.pfad, encoding="utf-8") as f:
+                self.dateien = set(json.load(f))
+        except (OSError, ValueError):
+            self.dateien = set()
+
+    def _key(self, pfad):
+        return os.path.relpath(pfad, self.ziel)
+
+    def bekannt(self, pfad):
+        return self._key(pfad) in self.dateien
+
+    def merken(self, pfad):
+        self.dateien.add(self._key(pfad))
+
+    def speichern(self, heute):
+        # Eintraege, die laenger als 60 Tage faellig sind, braucht niemand mehr
+        grenze = (heute - dt.timedelta(days=60)).isoformat()
+        behalten = sorted(d for d in self.dateien
+                          if os.path.basename(d)[:10] >= grenze)
+        os.makedirs(self.ziel, exist_ok=True)
+        with open(self.pfad, "w", encoding="utf-8") as f:
+            json.dump(behalten, f, indent=1, ensure_ascii=False)
+
+
+def aufraeumen(ziel, heute):
+    """Loescht Hausaufgaben-Dateien, deren Faelligkeitsdatum vorbei ist."""
+    geloescht = 0
+    if not os.path.isdir(ziel):
+        return 0
+    for ordner in os.listdir(ziel):
+        basis = os.path.join(ziel, ordner)
+        if not os.path.isdir(basis):
+            continue
+        for name in os.listdir(basis):
+            try:
+                faellig = dt.date.fromisoformat(name[:10])
+            except ValueError:
+                continue
+            if faellig < heute and name[10:11] == " ":
+                os.remove(os.path.join(basis, name))
+                geloescht += 1
+    return geloescht
+
+
 def speichern(pfad, daten, ueberschreiben):
     if os.path.exists(pfad) and not ueberschreiben:
         return False
@@ -503,6 +558,13 @@ def main(argv=None):
         logineo.anmelden()
         kurse = logineo.kurse()
 
+    verlauf = Verlauf(ziel)
+    neue = 0
+    if konfig.get("aufraeumen", True):
+        weg = aufraeumen(ziel, heute)
+        if weg:
+            print("%d alte Datei(en) geloescht (Faelligkeit vorbei)." % weg)
+
     kurs_cache = {}
     kurse_gezeigt = False
     for hw in offen:
@@ -547,20 +609,24 @@ def main(argv=None):
                     anhaenge.append((d["name"], d["url"]))
 
         pdf = aufgaben_pdf("%s: Hausaufgabe" % hw["fach"], kopf, "\n\n".join(texte))
-        neu = speichern(os.path.join(basis, praefix + " - Aufgabe.pdf"), pdf, args.ueberschreiben)
-        print("%s %s/%s - Aufgabe.pdf" % ("+" if neu else "=", dateiname(ordner), praefix))
+        dateien = [(os.path.join(basis, praefix + " - Aufgabe.pdf"), lambda pdf=pdf: pdf)]
         for name, url in anhaenge:
-            pfad = os.path.join(basis, "%s - %s" % (praefix, dateiname(name, 80)))
-            if os.path.exists(pfad) and not args.ueberschreiben:
-                print("= %s" % os.path.relpath(pfad, ziel))
+            dateien.append((os.path.join(basis, "%s - %s" % (praefix, dateiname(name, 80))),
+                            lambda url=url: logineo.herunterladen(url)))
+        for pfad, inhalt in dateien:
+            if not args.ueberschreiben and (verlauf.bekannt(pfad) or os.path.exists(pfad)):
+                verlauf.merken(pfad)
                 continue
             try:
-                speichern(pfad, logineo.herunterladen(url), True)
+                speichern(pfad, inhalt(), True)
+                verlauf.merken(pfad)
+                neue += 1
                 print("+ %s" % os.path.relpath(pfad, ziel))
             except Exception as e:
-                print("  ! %s konnte nicht geladen werden: %s" % (name, e))
+                print("  ! %s konnte nicht geladen werden: %s" % (os.path.basename(pfad), e))
 
-    print("Fertig. Dateien liegen in: %s" % ziel)
+    verlauf.speichern(heute)
+    print("Fertig: %d neue Datei(en) in %s" % (neue, ziel))
 
 
 if __name__ == "__main__":

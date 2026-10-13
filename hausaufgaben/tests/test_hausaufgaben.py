@@ -97,6 +97,9 @@ class Tests(unittest.TestCase):
         self.assertEqual(h.fach_info(k, "PH G1"), ("PH G1", None))
 
     def test_ablauf(self):
+        self._lauf()
+
+    def _lauf(self):
         import json, tempfile
         from unittest import mock
         heute = dt.date.today()
@@ -113,20 +116,40 @@ class Tests(unittest.TestCase):
                "text": "AB Brüche bearbeiten", "erledigt": False}]
         aufgabe = {"id": 9, "name": "Brüche", "duedate": jetzt + 86400, "intro": "<p>Alles</p>",
                    "introattachments": [{"filename": "ab.pdf", "fileurl": "https://l/f/ab.pdf"}]}
-        with mock.patch.dict(os.environ, {"UNTIS_PASSWORT": "p", "LOGINEO_PASSWORT": "p"}), \
-             mock.patch.object(h.Untis, "anmelden"), mock.patch.object(h.Untis, "abmelden"), \
-             mock.patch.object(h.Untis, "hausaufgaben", return_value=hw), \
-             mock.patch.object(h.Logineo, "anmelden"), \
-             mock.patch.object(h.Logineo, "kurse", return_value=[{"id": 4, "shortname": "Mathe 10", "fullname": ""}]), \
-             mock.patch.object(h.Logineo, "aufgaben", return_value=[aufgabe]), \
-             mock.patch.object(h.Logineo, "abgegeben", return_value=False), \
-             mock.patch.object(h.Logineo, "dateien", return_value=[]), \
-             mock.patch.object(h.Logineo, "herunterladen", return_value=b"%PDF-AB"), \
-             mock.patch("builtins.print"):
+        import contextlib
+
+        @contextlib.contextmanager
+        def patches():
+            with mock.patch.dict(os.environ, {"UNTIS_PASSWORT": "p", "LOGINEO_PASSWORT": "p"}), \
+                 mock.patch.object(h.Untis, "anmelden"), mock.patch.object(h.Untis, "abmelden"), \
+                 mock.patch.object(h.Untis, "hausaufgaben", return_value=hw), \
+                 mock.patch.object(h.Logineo, "anmelden"), \
+                 mock.patch.object(h.Logineo, "kurse", return_value=[{"id": 4, "shortname": "Mathe 10", "fullname": ""}]), \
+                 mock.patch.object(h.Logineo, "aufgaben", return_value=[aufgabe]), \
+                 mock.patch.object(h.Logineo, "abgegeben", return_value=False), \
+                 mock.patch.object(h.Logineo, "dateien", return_value=[]), \
+                 mock.patch.object(h.Logineo, "herunterladen", return_value=b"%PDF-AB"), \
+                 mock.patch("builtins.print"):
+                yield
+
+        with patches():
             h.main(["--konfig", pfad])
         dateien = sorted(os.listdir(os.path.join(tmp, "Mathe")))
         p = "%s AB Brüche bearbeiten" % faellig.isoformat()
         self.assertEqual(dateien, [p + " - Aufgabe.pdf", p + " - ab.pdf"])
+        return tmp, pfad, patches
+
+    def test_geloeschte_kommen_nicht_wieder(self):
+        tmp, pfad, patches = self._lauf()
+        mathe = os.path.join(tmp, "Mathe")
+        for d in os.listdir(mathe):
+            os.remove(os.path.join(mathe, d))
+        # alte, ueberfaellige Datei wird aufgeraeumt
+        alt = os.path.join(mathe, "2000-01-01 Alt - Aufgabe.pdf")
+        open(alt, "wb").close()
+        with patches():
+            h.main(["--konfig", pfad])
+        self.assertEqual(os.listdir(mathe), [])
 
 
 if __name__ == "__main__":

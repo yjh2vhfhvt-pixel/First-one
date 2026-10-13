@@ -79,6 +79,11 @@ python3 hausaufgaben.py --ohne-logineo
 
 Bereits vorhandene Dateien werden nicht überschrieben (`--ueberschreiben` erzwingt es).
 
+**Aufräumen:** Nach dem Import in GoodNotes kannst du die Dateien in der Dateien-App löschen.
+Das Skript merkt sich in `Ausgabe/.verlauf.json`, was es schon geliefert hat, und lädt
+gelöschte Dateien nicht erneut. Dateien, deren Fälligkeitsdatum vorbei ist, löscht es
+selbst (abschaltbar mit `"aufraeumen": false` in `config.json`).
+
 ## Grenzen
 
 - Untis-Login mit Benutzername/Passwort. Wenn deine Schule nur Anmeldung per
