@@ -70,6 +70,19 @@ class Tests(unittest.TestCase):
             with self.assertRaises(RuntimeError):
                 h.Untis.schule_suchen("remigianum.webuntis.com")
 
+    def test_einrichten(self):
+        import json, shutil, tempfile
+        from unittest import mock
+        tmp = tempfile.mkdtemp()
+        shutil.copy(os.path.join(os.path.dirname(h.__file__), "config.example.json"), tmp)
+        pfad = os.path.join(tmp, "config.json")
+        with mock.patch("builtins.input", side_effect=["untis.user", "logineo.user"]), \
+             mock.patch("builtins.print"):
+            k = h.lade_konfig(pfad)
+        self.assertEqual(k["untis"]["benutzer"], "untis.user")
+        with open(pfad) as f:
+            self.assertEqual(json.load(f)["logineo"]["benutzer"], "logineo.user")
+
     def test_ablauf(self):
         import json, tempfile
         from unittest import mock

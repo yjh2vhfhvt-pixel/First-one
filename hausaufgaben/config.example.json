@@ -2,18 +2,24 @@
   "untis": {
     "server": "remigianum.webuntis.com",
     "schule": "",
-    "benutzer": "VornameNachname"
+    "benutzer": ""
   },
   "logineo": {
-    "url": "https://SCHULNUMMER.logineonrw-lms.de",
-    "benutzer": "vorname.nachname"
+    "url": "https://168087.logineonrw-lms.de",
+    "benutzer": ""
   },
   "ausgabe_ordner": "Ausgabe",
   "tage_voraus": 7,
   "faecher": {
-    "M":  { "ordner": "Mathe",    "logineo_kurs": "Mathematik" },
-    "D":  { "ordner": "Deutsch",  "logineo_kurs": "Deutsch" },
-    "E":  { "ordner": "Englisch", "logineo_kurs": "Englisch" },
-    "BI": { "ordner": "Bio",      "logineo_kurs": "Biologie" }
+    "D":  { "ordner": "Deutsch",               "logineo_kurs": ["Deutsch"] },
+    "E":  { "ordner": "Englisch",              "logineo_kurs": ["Englisch"] },
+    "M":  { "ordner": "Mathe",                 "logineo_kurs": ["Mathe"] },
+    "EK": { "ordner": "Erdkunde",              "logineo_kurs": ["Erdkunde", "Geographie"] },
+    "ER": { "ordner": "Evangelische Religion", "logineo_kurs": ["Religion", "ER "] },
+    "SW": { "ordner": "SoWi",                  "logineo_kurs": ["SoWi", "Sozialwiss"] },
+    "CH": { "ordner": "Chemie",                "logineo_kurs": ["Chemie"] },
+    "LI": { "ordner": "Literatur",             "logineo_kurs": ["Literatur"] },
+    "IF": { "ordner": "Informatik",            "logineo_kurs": ["Informatik"] },
+    "SP": { "ordner": "Sport",                 "logineo_kurs": ["Sport"] }
   }
 }

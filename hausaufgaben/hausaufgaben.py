@@ -381,8 +381,27 @@ def finde_kurs(kurse, suchbegriffe):
 # --------------------------------------------------------------------------
 
 def lade_konfig(pfad):
+    if not os.path.exists(pfad):
+        return einrichten(pfad)
     with open(pfad, encoding="utf-8") as f:
         return json.load(f)
+
+
+def einrichten(pfad):
+    """Erster Start: legt config.json aus config.example.json an und fragt die Benutzernamen."""
+    vorlage = os.path.join(os.path.dirname(pfad), "config.example.json")
+    if not os.path.exists(vorlage):
+        raise RuntimeError("Weder %s noch config.example.json gefunden." % pfad)
+    with open(vorlage, encoding="utf-8") as f:
+        konfig = json.load(f)
+    print("Erste Einrichtung (Passwoerter werden NICHT gespeichert).")
+    konfig["untis"]["benutzer"] = input("Untis-Benutzername: ").strip()
+    if konfig.get("logineo", {}).get("url"):
+        konfig["logineo"]["benutzer"] = input("Logineo-Benutzername: ").strip()
+    with open(pfad, "w", encoding="utf-8") as f:
+        json.dump(konfig, f, indent=2, ensure_ascii=False)
+    print("Gespeichert in %s\n" % pfad)
+    return konfig
 
 
 def passwort(env, frage):
