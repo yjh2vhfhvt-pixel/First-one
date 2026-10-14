@@ -1,0 +1,25 @@
+{
+  "untis": {
+    "server": "remigianum.webuntis.com",
+    "schule": "",
+    "benutzer": ""
+  },
+  "logineo": {
+    "url": "https://168087.logineonrw-lms.de",
+    "benutzer": ""
+  },
+  "ausgabe_ordner": "Ausgabe",
+  "tage_voraus": 7,
+  "faecher": {
+    "D":  { "ordner": "Deutsch",               "logineo_kurs": ["Deutsch"] },
+    "E":  { "ordner": "Englisch",              "logineo_kurs": ["Englisch"] },
+    "M":  { "ordner": "Mathe",                 "logineo_kurs": ["Mathe"] },
+    "EK": { "ordner": "Erdkunde",              "logineo_kurs": ["Erdkunde"] },
+    "ER": { "ordner": "Evangelische Religion" },
+    "SW": { "ordner": "SoWi",                  "logineo_kurs": ["SoWi"] },
+    "CH": { "ordner": "Chemie" },
+    "LI": { "ordner": "Literatur",             "logineo_kurs": ["Literatur"] },
+    "IF": { "ordner": "Informatik",            "logineo_kurs": ["Informatik"] },
+    "SP": { "ordner": "Sport" }
+  }
+}
