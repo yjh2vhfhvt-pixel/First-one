@@ -356,6 +356,7 @@ class Logineo:
                             "url": inhalt.get("fileurl"),
                             "zeit": inhalt.get("timemodified") or 0,
                             "modul": modul.get("name", ""),
+                            "abschnitt": abschnitt.get("name", ""),
                         })
         return dateien
 
@@ -547,6 +548,61 @@ def speichern(pfad, daten, ueberschreiben):
     return True
 
 
+def ordner_fuer_kurs(konfig, name):
+    """Sucht den GoodNotes-Ordner des Fachs, dessen Logineo-Suchbegriff passt."""
+    n = name.lower()
+    for eintrag in konfig.get("faecher", {}).values():
+        begriffe = eintrag.get("logineo_kurs") or []
+        if isinstance(begriffe, str):
+            begriffe = [begriffe]
+        if any(b.lower() in n or n in b.lower() for b in begriffe):
+            return eintrag.get("ordner") or name
+    return name
+
+
+def kurs_material(konfig, ziel, name):
+    """Laedt alle Dateien und Aufgaben eines Logineo-Kurses nach <Fach>/Material/."""
+    l = konfig["logineo"]
+    logineo = Logineo(l["url"], l["benutzer"], passwort("LOGINEO_PASSWORT", "Logineo-Passwort: "))
+    logineo.anmelden()
+    kurse = logineo.kurse()
+    kurs = finde_kurs(kurse, name)
+    if not kurs:
+        raise RuntimeError("Kurs '%s' nicht gefunden. Deine Kurse: %s" % (
+            name, "; ".join(k.get("fullname") or k.get("shortname", "?") for k in kurse)))
+    print("Kurs: %s" % kurs.get("fullname"))
+    basis = os.path.join(ziel, dateiname(ordner_fuer_kurs(konfig, name)), "Material")
+
+    dateien = [(os.path.join(basis, dateiname(d["abschnitt"] or "Allgemein"),
+                             dateiname(d["name"], 80)), d["url"])
+               for d in logineo.dateien(kurs["id"])]
+    for a in logineo.aufgaben(kurs["id"]):
+        ordner = os.path.join(basis, "Aufgaben", dateiname(a.get("name", "Aufgabe")))
+        beschreibung = html_zu_text(a.get("intro", ""))
+        if beschreibung:
+            kopf = []
+            if a.get("duedate"):
+                kopf.append("Faellig: %s" % dt.datetime.fromtimestamp(a["duedate"]).strftime("%d.%m.%Y"))
+            pfad = os.path.join(ordner, "Aufgabe.pdf")
+            if not os.path.exists(pfad):
+                speichern(pfad, aufgaben_pdf(a.get("name", "Aufgabe"), kopf, beschreibung), True)
+                print("+ %s" % os.path.relpath(pfad, ziel))
+        for d in a.get("introattachments", []):
+            dateien.append((os.path.join(ordner, dateiname(d["filename"], 80)), d["fileurl"]))
+
+    neue = 0
+    for pfad, url in dateien:
+        if os.path.exists(pfad):
+            continue
+        try:
+            speichern(pfad, logineo.herunterladen(url), True)
+            neue += 1
+            print("+ %s" % os.path.relpath(pfad, ziel))
+        except Exception as e:
+            print("  ! %s konnte nicht geladen werden: %s" % (os.path.basename(pfad), e))
+    print("Fertig: %d neue Datei(en) in %s" % (neue, basis))
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--konfig", default=os.path.join(HIER, "config.json"))
@@ -554,6 +610,8 @@ def main(argv=None):
     ap.add_argument("--ueberschreiben", action="store_true",
                     help="vorhandene Dateien neu schreiben")
     ap.add_argument("--ohne-logineo", action="store_true")
+    ap.add_argument("--kurs", metavar="NAME",
+                    help="alle Materialien eines Logineo-Kurses laden, z. B. --kurs Erdkunde")
     ap.add_argument("--passwoerter-speichern", action="store_true",
                     help="Passwoerter einmalig auf diesem Geraet speichern (fuer Kurzbefehle)")
     args = ap.parse_args(argv)
@@ -567,6 +625,10 @@ def main(argv=None):
     ziel = os.path.expanduser(konfig.get("ausgabe_ordner") or os.path.join(HIER, "Ausgabe"))
     if not os.path.isabs(ziel):
         ziel = os.path.join(HIER, ziel)
+
+    if args.kurs:
+        kurs_material(konfig, ziel, args.kurs)
+        return
 
     u = konfig["untis"]
     if not u.get("schule"):

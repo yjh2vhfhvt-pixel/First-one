@@ -102,6 +102,31 @@ class Tests(unittest.TestCase):
             self.assertEqual(h.passwort("UNTIS_PASSWORT", "x"), "u-pw")
             self.assertEqual(h.passwort("LOGINEO_PASSWORT", "x"), "l-pw")
 
+    def test_kurs_material(self):
+        import tempfile
+        from unittest import mock
+        tmp = tempfile.mkdtemp()
+        konfig = {"logineo": {"url": "https://l", "benutzer": "u"},
+                  "faecher": {"EK": {"ordner": "Erdkunde", "logineo_kurs": ["Erdkunde"]}}}
+        dateien = [{"name": "Klima.pdf", "url": "https://l/1", "zeit": 0, "modul": "AB",
+                    "abschnitt": "Thema 1: Klima"}]
+        aufgaben = [{"id": 1, "name": "Referat", "duedate": 0, "intro": "<p>Vorbereiten</p>",
+                     "introattachments": [{"filename": "info.pdf", "fileurl": "https://l/2"}]}]
+        with mock.patch.dict(os.environ, {"LOGINEO_PASSWORT": "p"}), \
+             mock.patch.object(h.Logineo, "anmelden"), \
+             mock.patch.object(h.Logineo, "kurse", return_value=[{"id": 3, "fullname": "Erdkunde Q L1 Köhler"}]), \
+             mock.patch.object(h.Logineo, "dateien", return_value=dateien), \
+             mock.patch.object(h.Logineo, "aufgaben", return_value=aufgaben), \
+             mock.patch.object(h.Logineo, "herunterladen", return_value=b"%PDF-x"), \
+             mock.patch("builtins.print"):
+            h.kurs_material(konfig, tmp, "Erdkunde")
+        m = os.path.join(tmp, "Erdkunde", "Material")
+        self.assertTrue(os.path.exists(os.path.join(m, "Thema 1 Klima", "Klima.pdf")))
+        self.assertTrue(os.path.exists(os.path.join(m, "Aufgaben", "Referat", "Aufgabe.pdf")))
+        self.assertTrue(os.path.exists(os.path.join(m, "Aufgaben", "Referat", "info.pdf")))
+        # Material-Ordner wird vom Aufraeumen nicht angefasst
+        self.assertEqual(h.aufraeumen(tmp, dt.date.today()), 0)
+
     def test_fach_info(self):
         k = {"faecher": {"CH": {"ordner": "Chemie", "logineo_kurs": ["Chemie"]}}}
         self.assertEqual(h.fach_info(k, "CH G2"), ("Chemie", ["Chemie"]))
